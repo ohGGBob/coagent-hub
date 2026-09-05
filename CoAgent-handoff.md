@@ -84,7 +84,7 @@ Hub 内部模块：Auth&分支权限 / Git 编排器 / 上下文存储 / 实时�
 
 ## 12. 当前进度与下一步
 - 设计阶段完成（v1）：三层架构、数据模型、事件 schema、SDK 协议、权限、路线图、风险均已定义；v2 修订见 §2.1。
-- **Phase 1 骨架已落地且冒烟全绿**（2026-09-05，63/63 断言通过，多轮稳定）：零依赖 Node ESM 实现，位于 `src/`：
+- **Phase 1 骨架已落地且冒烟全绿**（2026-09-05，64/64 断言通过，多轮稳定）：零依赖 Node ESM 实现，位于 `src/`：
   `config / errors / eventlog(JSONL+订阅挂点) / jsonfile / auth(含用户管理) / context / tasks / reviews / git-repo(裸仓+bundle) / server(REST)`，
   SDK 在 `src/sdk/client.js`（含 repo 整仓读通道与 users 管理），端到端冒烟 `scripts/smoke.js`（`npm run smoke`），
   agent 命令行工具 `scripts/hub.mjs`（`npm run hub -- init/pull/push/status/sync/whoami`，支持内嵌调用），部署/接入文档 `README.md`。

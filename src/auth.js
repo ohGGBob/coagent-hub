@@ -48,6 +48,9 @@ const SEED_USERS = [
   { id: 'bob', name: 'Bob', token: 'tok_bob_0002', scopes: ADMIN_SCOPES },
 ];
 
+/** 种子默认 token 集合——写死在源码里（已公开），正式部署前必须轮换，勿当真实凭证 */
+const SEED_TOKENS = new Set(SEED_USERS.map((u) => u.token));
+
 /**
  * 加载用户表；文件不存在则写入种子。
  * @returns {User[]}
@@ -128,6 +131,17 @@ export function createUser(input) {
 /** 用户列表（不含 token，防止凭证外泄）。 */
 export function listUsersPublic() {
   return loadUsers().map(({ token, ...pub }) => pub);
+}
+
+/**
+ * 返回仍在使用「种子默认 token」的用户 id 列表。
+ * 服务启动时据此提醒：只要有人在用默认口令，就要警告换掉。
+ * @returns {string[]}
+ */
+export function defaultTokensActive() {
+  return loadUsers()
+    .filter((u) => SEED_TOKENS.has(u.token))
+    .map((u) => u.id);
 }
 
 /**

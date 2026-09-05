@@ -20,7 +20,7 @@ import { createEventLog } from './eventlog.js';
 import { createContextStore } from './context.js';
 import { createTaskStore } from './tasks.js';
 import { createReviewStore } from './reviews.js';
-import { loadUsers, verify, requireScope, createUser, listUsersPublic, rotateToken, deleteUser } from './auth.js';
+import { loadUsers, verify, requireScope, createUser, listUsersPublic, rotateToken, deleteUser, defaultTokensActive } from './auth.js';
 import * as repo from './git-repo.js';
 import { HubError, badRequest, notFound, notImplemented, forbidden } from './errors.js';
 
@@ -389,5 +389,15 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     console.log('[CoAgent Hub] 同学们的 agent 用以下地址接入（同一网络时）：');
     for (const ip of ips) console.log(`[CoAgent Hub]   http://${ip}:${PORT}`);
     console.log('[CoAgent Hub] 跨网络接入见 README.md（Tailscale 虚拟局域网）');
+
+    // 只要还有账号在用种子默认 token，就在启动时第一时间警告更换
+    const defaultUsers = defaultTokensActive();
+    if (defaultUsers.length) {
+      console.warn(
+        `\n⚠️  以下账号仍在使用「种子默认 token」：${defaultUsers.join(', ')}\n` +
+        '    这些口令写死并存于公开源码，任何能连上本 Hub 的人都可冒充管理员。\n' +
+        '    → 正式使用前请立即轮换：POST /users/:id/rotate，或编辑 data/users.json 后重启。\n',
+      );
+    }
   });
 }

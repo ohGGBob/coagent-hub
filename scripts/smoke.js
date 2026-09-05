@@ -24,6 +24,7 @@ process.env.COAGENT_DATA = path.join(TMP_ROOT, 'data');
 const { PATHS } = await import('../src/config.js');
 const { createHub } = await import('../src/server.js');
 const { HubClient } = await import('../src/sdk/client.js');
+const { defaultTokensActive } = await import('../src/auth.js');
 
 // ---------------------------------------------------------------- 测试骨架
 let passed = 0;
@@ -253,6 +254,7 @@ try {
 
   // ------------------------------------------------------------ 9. 用户管理 API
   section('9. 用户管理 API');
+  ok(defaultTokensActive().includes('alice'), '检测到种子默认 token 仍在使用（启动警告依据）');
   const carolRes = await alice.users.create({
     id: 'carol',
     name: 'Carol',

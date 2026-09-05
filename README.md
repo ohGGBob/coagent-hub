@@ -7,11 +7,14 @@
 
 ```bash
 npm start          # Hub 监听 http://localhost:8787
-npm run smoke      # 端到端冒烟测试（63 项断言）
+npm run smoke      # 端到端冒烟测试（64 项断言）
 ```
 
 首次启动自动生成 `data/`：`users.json`（种子账号 alice/bob）、`repo.git`（托管裸仓）、
 `events.jsonl`（事件日志）等。种子 token 见 `data/users.json`。
+
+> 启动时若检测到仍在使用这些**种子默认 token**，服务会第一时间打印警告提醒你轮换
+> （这些口令写死在公开源码里，正式部署前务必换掉）。
 
 ## 多人协同部署（真实场景）
 
