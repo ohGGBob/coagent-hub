@@ -7,6 +7,9 @@
 
 整个 Hub + agent CLI 打包成一个 Windows exe（Node SEA），**目标机不需要装 Node**：
 
+> **下载**：<https://github.com/ohGGBob/coagent-hub/releases/latest>
+> （`coagent-x64.exe` 主程序 + `usage-guide.txt` 三分钟上手说明）
+
 - **主机**：下载 `coagent-x64.exe`，放到任意文件夹双击 → 服务立起，
   数据在 exe 同目录 `data\`（便携，整个文件夹拷走即迁移）。
 - **同学**：下载同一个 exe 当命令行工具用：
