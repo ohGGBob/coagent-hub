@@ -9,9 +9,21 @@ import path from 'node:path';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
-const HERE = path.dirname(fileURLToPath(import.meta.url));
-/** 仓库根目录（src 的上一级） */
-export const ROOT = path.resolve(HERE, '..');
+/**
+ * 源码目录 / 仓库根目录。
+ * - Node 直跑（npm start / smoke）：src 目录 → ROOT 为其上一级。
+ * - SEA 单文件 exe（esbuild 打 CJS 后 import.meta 不可用）：fileURLToPath 抛错，
+ *   回落到 exe 所在目录 → 默认数据目录就是 exe 旁边的 data/，天然便携。
+ */
+const HERE = (() => {
+  try {
+    return path.dirname(fileURLToPath(import.meta.url));
+  } catch {
+    return '';
+  }
+})();
+
+export const ROOT = HERE ? path.resolve(HERE, '..') : path.dirname(process.execPath);
 
 /**
  * @typedef {object} Paths
@@ -43,7 +55,7 @@ export const PATHS = Object.freeze({
 export const PORT = Number(process.env.COAGENT_PORT ?? 8787);
 
 /** 协议版本，随 Phase 推进递增 */
-export const HUB_VERSION = '0.1.0-phase1';
+export const HUB_VERSION = '0.3.0';
 
 /** 受保护分支：只能经审核后的 fast-forward 合入 */
 export const PROTECTED_BRANCHES = Object.freeze(['main']);

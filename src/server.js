@@ -11,8 +11,6 @@
 
 import http from 'node:http';
 import fs from 'node:fs';
-import os from 'node:os';
-import { pathToFileURL } from 'node:url';
 import {
   PATHS, PORT, HUB_VERSION, ensureDirs, privateBranch, PROTECTED_BRANCHES,
 } from './config.js';
@@ -20,9 +18,10 @@ import { createEventLog } from './eventlog.js';
 import { createContextStore } from './context.js';
 import { createTaskStore } from './tasks.js';
 import { createReviewStore } from './reviews.js';
-import { loadUsers, verify, requireScope, createUser, listUsersPublic, rotateToken, deleteUser, defaultTokensActive } from './auth.js';
+import { loadUsers, verify, requireScope, createUser, listUsersPublic, rotateToken, deleteUser } from './auth.js';
 import * as repo from './git-repo.js';
 import { HubError, badRequest, notFound, newUpgradeRequired, forbidden } from './errors.js';
+import { guideMarkdown } from './guide.js';
 import { attachWebSocket } from './ws.js';
 
 const MAX_BODY = 128 * 1024 * 1024;
@@ -79,6 +78,13 @@ export function createHub() {
     const user = users.find((u) => (token ? u.token === token && (!userId || u.id === userId) : u.id === userId));
     if (!user) throw new HubError(401, 'UNAUTHORIZED', 'userId / token 不匹配');
     return { userId: user.id, name: user.name, token: user.token, scopes: user.scopes };
+  });
+
+  // ---------- Agent 自助接入指南（无鉴权：不含任何秘密） ----------
+  add('GET', /^\/guide$/, null, ({ req }) => {
+    const host = req.headers.host ?? `localhost:${PORT}`;
+    const md = guideMarkdown(`http://${host}`, { version: HUB_VERSION });
+    return { raw: Buffer.from(md, 'utf8'), contentType: 'text/markdown; charset=utf-8' };
   });
 
   // ---------- Phase 2 实时总线入口 ----------
@@ -381,32 +387,5 @@ function sendJson(res, status, payload) {
   res.end(buf);
 }
 
-// 直接执行时启动服务
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  const { server } = createHub();
-  server.listen(PORT, () => {
-    console.log(`[CoAgent Hub] ${HUB_VERSION} 监听 :${PORT}（所有网卡）`);
-    console.log(`[CoAgent Hub] 数据目录：${PATHS.data}`);
-    console.log(`[CoAgent Hub] 裸仓：${PATHS.repo}`);
-    const nets = os.networkInterfaces();
-    const ips = Object.values(nets)
-      .flat()
-      .filter((n) => n?.family === 'IPv4' && !n.internal)
-      .map((n) => n.address);
-    console.log('[CoAgent Hub] 同学们的 agent 用以下地址接入（同一网络时）：');
-    for (const ip of ips) console.log(`[CoAgent Hub]   http://${ip}:${PORT}`);
-    console.log('[CoAgent Hub] 跨网络接入见 README.md（Tailscale 虚拟局域网）');
-    console.log('[CoAgent Hub] 给同学开户：npm run hub -- adduser <userId> "显示名" --token <管理员token>');
-    console.log('[CoAgent Hub] API 文档：README.md ｜ 冒烟自检：npm run smoke');
-
-    // 只要还有账号在用种子默认 token，就在启动时第一时间警告更换
-    const defaultUsers = defaultTokensActive();
-    if (defaultUsers.length) {
-      console.warn(
-        `\n⚠️  以下账号仍在使用「种子默认 token」：${defaultUsers.join(', ')}\n` +
-        '    这些口令写死并存于公开源码，任何能连上本 Hub 的人都可冒充管理员。\n' +
-        '    → 正式使用前请立即轮换：POST /users/:id/rotate，或编辑 data/users.json 后重启。\n',
-      );
-    }
-  });
-}
+// 直接执行时启动服务 → 已迁移到 scripts/serve.mjs（npm start），
+// 且 SEA 打包（coagent.exe）由 scripts/sea-entry.mjs 自行调度，本文件保持纯库模块。

@@ -81,7 +81,9 @@ function parseArgs(argv) {
  */
 export async function run(argv) {
   const { command, flags, positional } = parseArgs(argv);
-  const dir = path.resolve(flags.get('dir') ?? positional[0] ?? process.cwd());
+  // 只有 init 的位置参数是工作目录；note/task/claim/adduser 的位置参数分别是
+  // 标题/任务id/用户id，绝不能吞进 dir（在工作目录内裸敲 note "标题" 是最常见用法）
+  const dir = path.resolve(flags.get('dir') ?? (command === 'init' ? positional[0] : undefined) ?? process.cwd());
   const hubUrl = flags.get('hub') ?? process.env.HUB_URL;
   const token = flags.get('token') ?? process.env.HUB_TOKEN;
   /** @type {string[]} */
@@ -216,11 +218,11 @@ export async function run(argv) {
       log('');
       log('—— 把下面整段发给这位同学即可 ——');
       log('┌─────────────────────────────────────────────');
-      log(`│ 1. 找 ${user.name} 要一份本项目的代码副本（npm run hub 的项目目录）`);
-      log(`│ 2. 装好 Node ≥18 和 git 后，在项目目录执行：`);
-      log(`│    npm run hub -- init ./my-work --hub ${url} --token ${user.token}`);
-      log(`│ 3. 每天开工：npm run hub -- sync --dir ./my-work`);
-      log(`│ 4. 改完代码：npm run hub -- push --dir ./my-work`);
+      log(`│ 1. 到 GitHub Releases 下载 coagent-x64.exe（无需装 Node）`);
+      log(`│ 2. 代码协作：coagent.exe init ./my-work --hub ${url} --token ${user.token}`);
+      log(`│    之后在工作目录里：sync（开工）/ push（交作业）`);
+      log(`│ 3. agent 接入：把这句话发给你的 agent ——`);
+      log(`│    「fetch ${url}/guide 并照做」`);
       log('└─────────────────────────────────────────────');
       log('');
       log('⚠ token 只显示这一次，请同学妥善保存；泄露就用 rotate 换新。');
@@ -347,8 +349,8 @@ CoAgent agent 命令行工具
 环境变量：HUB_URL、HUB_TOKEN
 `.trim();
 
-// 命令行入口
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+// 命令行入口（SEA 打包为 coagent.exe 时由 sea-entry 调度，这里让位）
+if (process.env.COAGENT_ENTRY !== 'sea' && process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   run(process.argv.slice(2))
     .then((out) => console.log(out))
     .catch((err) => {

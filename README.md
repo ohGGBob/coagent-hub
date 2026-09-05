@@ -3,7 +3,29 @@
 让多个人**各用自己的本地 AI agent**，在**各自不同的电脑**上协同开发同一个项目：
 共享上下文、不用互传文件夹、进度互相可见。
 
-## 快速开始（单机试玩）
+## 单文件版（coagent.exe，推荐）
+
+整个 Hub + agent CLI 打包成一个 Windows exe（Node SEA），**目标机不需要装 Node**：
+
+- **主机**：下载 `coagent-x64.exe`，放到任意文件夹双击 → 服务立起，
+  数据在 exe 同目录 `data\`（便携，整个文件夹拷走即迁移）。
+- **同学**：下载同一个 exe 当命令行工具用：
+
+  ```bat
+  coagent.exe init ./my-work --hub http://<主机IP>:8787 --token <token>
+  cd my-work
+  coagent.exe sync        :: 开工：拉全员进度 + 看任务板
+  coagent.exe push        :: 收工：推送自己的分支
+  coagent.exe note "登录页完成"   :: 在工作目录内裸敲，无需 --dir
+  ```
+
+- **agent 自助接入**：把这句话发给同学的 agent 即可——
+  「fetch `http://<主机IP>:8787/guide` 并照做」（`/guide` 动态生成完整接入指南）。
+
+> 首次运行 Windows 可能弹 SmartScreen 提示（未签名二进制），点「仍要运行」即可。
+> 自行构建：`npm run build:exe`（esbuild → SEA blob → postject 注入，产物在 `dist/`）。
+
+## 快速开始（单机试玩，源码方式）
 
 ```bash
 npm start          # Hub 监听 :8787，自动打印局域网地址和下一步命令

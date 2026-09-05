@@ -1,15 +1,20 @@
 {
   "name": "coagent-hub",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
-  "description": "CoAgent Hub — 多 Agent 协同开发中枢（Phase 1 最小原型）",
+  "description": "CoAgent Hub — 多 Agent 协同开发中枢（单文件 exe 版）",
   "engines": {
     "node": ">=18"
   },
   "scripts": {
-    "start": "node src/server.js",
+    "start": "node scripts/serve.mjs",
     "smoke": "node scripts/smoke.js",
-    "hub": "node scripts/hub.mjs"
+    "hub": "node scripts/hub.mjs",
+    "build:exe": "node scripts/build-exe.mjs"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2",
+    "postject": "^1.0.0-alpha.6"
   }
 }

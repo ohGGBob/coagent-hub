@@ -9,6 +9,9 @@ data/
 # ---- 依赖 ----
 node_modules/
 
+# ---- 构建产物（exe 走 GitHub Releases，不进 git）----
+dist/
+
 # ---- 本地工作记忆 / 编辑器 ----
 .workbuddy/
 .vscode/
