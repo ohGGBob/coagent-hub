@@ -21,6 +21,22 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const TMP_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), 'coagent-smoke-'));
 process.env.COAGENT_DATA = path.join(TMP_ROOT, 'data');
 
+// 兜底清理：进程被强杀（SIGTERM/调试中断）时 finally 不执行，会留下历史临时目录。
+// 只删除超过 1 小时的同前缀目录，避免误伤并行运行的其它 smoke 实例。
+const STALE_MS = 60 * 60 * 1000;
+try {
+  for (const name of fs.readdirSync(os.tmpdir())) {
+    if (!name.startsWith('coagent-smoke-')) continue;
+    const dir = path.join(os.tmpdir(), name);
+    if (dir === TMP_ROOT) continue;
+    const st = fs.statSync(dir);
+    if (Date.now() - st.mtimeMs > STALE_MS) {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  }
+} catch { /* 清理失败不影响测试 */ }
+
+
 const { PATHS } = await import('../src/config.js');
 const { createHub } = await import('../src/server.js');
 const { HubClient, connectHubWs } = await import('../src/sdk/client.js');
