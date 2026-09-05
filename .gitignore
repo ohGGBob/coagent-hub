@@ -1,0 +1,18 @@
+# ---- 运行时数据与凭证（绝不入库）----
+# Hub 启动后生成：裸仓、users.json、事件日志、任务板、审核记录等
+data/
+# git bundle 中间产物
+*.bundle
+# agent CLI 在本地工作目录写入的配置（含 token）
+.coagent.json
+
+# ---- 依赖 ----
+node_modules/
+
+# ---- 本地工作记忆 / 编辑器 ----
+.workbuddy/
+.vscode/
+.idea/
+*.log
+.DS_Store
+Thumbs.db
