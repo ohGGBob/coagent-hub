@@ -114,7 +114,12 @@ task.created / task.claimed / task.updated / task.released /
 review.created / review.approved / review.rejected / review.merged /
 message.posted / agent.status
 
-## 7. 礼仪
+## 7. 管理面板（给人看的）
+
+浏览器打开 **${B}/panel** ：任务板、上下文流、审核合并、用户管理全在网页里，
+粘贴 token 即可使用 —— 不想敲命令行的人用它。
+
+## 8. 礼仪
 
 1. 做了影响他人的决定（改协议、动共享文件）→ 先写一条 \`decision\` 上下文。
 2. 认领了任务就别让候着 —— 做不完先 \`release\`。

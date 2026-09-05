@@ -18,6 +18,76 @@ import { forbidden, notFound, badRequest } from './errors.js';
 const VALID_TYPES = new Set(['decision', 'progress', 'blocker', 'note', 'summary']);
 
 /**
+ * 极简零依赖分词：按非字母数字切西文词；CJK 连续串切成单字 + 相邻二元组
+ * （二元组让「登录页」能命中「登录」，单字保证单字查询仍可用）。
+ * @param {string} text
+ * @returns {string[]}
+ */
+function tokenize(text) {
+  const tokens = [];
+  for (const chunk of String(text).toLowerCase().split(/[^\p{L}\p{N}]+/u)) {
+    if (!chunk) continue;
+    if (/[\u4e00-\u9fff]/.test(chunk)) {
+      for (let i = 0; i < chunk.length; i++) {
+        tokens.push(chunk[i]);
+        if (i + 1 < chunk.length) tokens.push(chunk.slice(i, i + 2));
+      }
+    } else {
+      tokens.push(chunk);
+    }
+  }
+  return tokens;
+}
+
+/**
+ * BM25 相关性打分。title 出现两次参与统计（标题权重 ≈ ×2），tags 一并计入。
+ * @param {ContextEntry[]} entries
+ * @param {string} q 查询串（可多词）
+ * @returns {Array<{entry: ContextEntry, score: number}>} 仅保留 score>0，按分数降序
+ */
+function bm25(entries, q) {
+  const k1 = 1.5;
+  const b = 0.75;
+  const allTerms = [...new Set(tokenize(q))];
+  if (!allTerms.length) return entries.map((entry) => ({ entry, score: 0 }));
+
+  const docs = entries.map((entry) => {
+    const tf = new Map();
+    let len = 0;
+    for (const t of tokenize([entry.title, entry.title, entry.body, ...(entry.tags ?? [])].join(' '))) {
+      tf.set(t, (tf.get(t) ?? 0) + 1);
+      len++;
+    }
+    return { entry, tf, len };
+  });
+
+  const N = Math.max(docs.length, 1);
+  const avgLen = docs.reduce((s, d) => s + d.len, 0) / N || 1;
+
+  const scoreWith = (terms) => {
+    const df = new Map(terms.map((term) => [term, docs.filter((d) => d.tf.has(term)).length]));
+    const scored = docs.map((d) => {
+      let score = 0;
+      for (const term of terms) {
+        const f = d.tf.get(term);
+        const n = df.get(term) ?? 0;
+        if (!f) continue;
+        const idf = Math.log(1 + (N - n + 0.5) / (n + 0.5));
+        score += idf * ((f * (k1 + 1)) / (f + k1 * (1 - b + b * (d.len / avgLen))));
+      }
+      return { entry: d.entry, score };
+    });
+    return scored.filter((x) => x.score > 0).sort((a, z) => z.score - a.score);
+  };
+
+  // 查询主词项：西文词 + CJK 二元组。单个汉字太常见（「的」「了」）会到处误命中。
+  // 只有当查询全部由单字构成（主词项为空）时，才降级用单字兜底。
+  const isCjkUnigram = (t) => t.length === 1 && /[\u4e00-\u9fff]/.test(t);
+  const primary = allTerms.filter((t) => !isCjkUnigram(t));
+  return scoreWith(primary.length ? primary : allTerms);
+}
+
+/**
  * @typedef {object} ContextEntry
  * @property {string} id
  * @property {string} authorId
@@ -103,20 +173,24 @@ export function createContextStore({ file = PATHS.context, eventLog }) {
       all.filter((r) => r.kind === 'retract').map((r) => r.targetId),
     );
     const since = filter.since ? Date.parse(filter.since) : NaN;
-    const q = filter.q?.toLowerCase();
+    const q = filter.q?.trim();
     const tags = filter.tags;
 
-    const entries = all
+    let entries = all
       .filter((e) => e.kind !== 'retract')
       .filter((e) => (filter.includeRetracted ? true : !retracted.has(e.id)))
       .filter((e) => (filter.taskId ? e.taskId === filter.taskId : true))
       .filter((e) => (filter.authorId ? e.authorId === filter.authorId : true))
       .filter((e) => (filter.type ? e.type === filter.type : true))
       .filter((e) => (Number.isFinite(since) ? Date.parse(e.createdAt) >= since : true))
-      .filter((e) => (tags?.length ? tags.every((t) => e.tags.includes(t)) : true))
-      .filter((e) =>
-        q ? (e.title + '\n' + e.body).toLowerCase().includes(q) : true,
-      );
+      .filter((e) => (tags?.length ? tags.every((t) => e.tags.includes(t)) : true));
+
+    if (q) {
+      // 相关性检索：多词 BM25 打分（title ×2 权重、tags 计入），只返回有命中的条目
+      const scored = bm25(entries, q);
+      const limit = filter.limit ?? 200;
+      return scored.slice(0, limit).map((x) => x.entry);
+    }
 
     // 默认按时间正序（回放友好）
     return entries.slice(-(filter.limit ?? 200));

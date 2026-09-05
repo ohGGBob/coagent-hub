@@ -50,6 +50,7 @@ fs.writeFileSync(
       disableExperimentalSEAWarning: true,
       useSnapshot: false,
       useCodeCache: true,
+      assets: { 'panel.html': 'src/panel.html' },
     },
     null,
     2,

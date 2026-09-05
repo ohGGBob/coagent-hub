@@ -158,6 +158,14 @@ try {
   ok((await alice.me()).userId === 'alice', '/me 识别 alice 身份');
   await rejects(() => new HubClient({ hubUrl, token: 'tok_nope' }).me(), 401, '无效 token 被拒');
 
+  // /guide 与 /panel：公开端点，正文完整伺服（SDK 对非 JSON 包成 {raw}）
+  {
+    const g = await alice.request('GET', '/guide');
+    ok(String(g.raw).includes('# CoAgent Hub') && String(g.raw).includes(hubUrl), '/guide 返回含 Hub 地址的接入指南');
+    const p = await alice.request('GET', '/panel');
+    ok(String(p.raw).includes('CoAgent Hub 管理面板') && String(p.raw).includes('viewTasks'), '/panel 返回管理面板 HTML');
+  }
+
   // ------------------------------------------------------------ 2. 任务板
   section('2. 任务板与认领冲突');
   const { task } = await alice.task.create({ title: '实现事件日志回放', tags: ['phase1'] });
@@ -217,6 +225,24 @@ try {
     (await bob.context.query({ includeRetracted: true })).entries.some((e) => e.id === entry.id),
     'includeRetracted=1 仍可追溯（撤回是软删除）',
   );
+
+  // BM25 相关性检索：多词、CJK 二元组、标题加权、无命中返回空
+  await alice.context.append({ type: 'note', title: '登录页采用 WebSocket 推送在线状态' });
+  await alice.context.append({ type: 'note', title: '数据库连接池大小定为 20' });
+  await alice.context.append({ type: 'blocker', title: '等待设计师给登录页配色稿' });
+  const ranked = await bob.context.query({ q: '登录页 在线状态' });
+  ok(ranked.entries.length >= 2, 'BM25 多词检索有命中');
+  ok(
+    ranked.entries[0].title.includes('登录页') && ranked.entries[0].title.includes('WebSocket'),
+    'BM25 相关性排序：双词全中的排最前',
+  );
+  ok(
+    ranked.entries[0].title.includes('登录页') && !ranked.entries[0].title.includes('连接池') ||
+      ranked.entries.every((e) => !e.title.includes('连接池') || e.title.includes('登录页')),
+    '无关条目不掺和进结果',
+  );
+  ok((await bob.context.query({ q: '不存在的词组xyzq' })).entries.length === 0, '无命中返回空');
+  ok((await bob.context.query({ q: '配色稿' })).entries.length === 1, 'CJK 单条精确命中');
 
   // ------------------------------------------------------------ 6. 事件回放
   section('6. 事件日志（唯一真相源）');

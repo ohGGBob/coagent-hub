@@ -11,8 +11,9 @@
 
 import http from 'node:http';
 import fs from 'node:fs';
+import path from 'node:path';
 import {
-  PATHS, PORT, HUB_VERSION, ensureDirs, privateBranch, PROTECTED_BRANCHES,
+  PATHS, PORT, HUB_VERSION, ROOT, ensureDirs, privateBranch, PROTECTED_BRANCHES,
 } from './config.js';
 import { createEventLog } from './eventlog.js';
 import { createContextStore } from './context.js';
@@ -85,6 +86,20 @@ export function createHub() {
     const host = req.headers.host ?? `localhost:${PORT}`;
     const md = guideMarkdown(`http://${host}`, { version: HUB_VERSION });
     return { raw: Buffer.from(md, 'utf8'), contentType: 'text/markdown; charset=utf-8' };
+  });
+
+  // ---------- Web 管理面板（静态页本身无鉴权，数据接口各自鉴权） ----------
+  let panelCache;
+  add('GET', /^\/panel$/, null, () => {
+    if (!panelCache) {
+      try {
+        // SEA 打包：panel.html 作为内嵌资产随 exe 分发
+        const sea = process.getBuiltinModule?.('node:sea');
+        if (sea?.getRawAsset) panelCache = Buffer.from(sea.getRawAsset('panel.html'));
+      } catch { /* 非 SEA 环境走文件 */ }
+      if (!panelCache) panelCache = fs.readFileSync(path.join(ROOT, 'src', 'panel.html'));
+    }
+    return { raw: panelCache, contentType: 'text/html; charset=utf-8' };
   });
 
   // ---------- Phase 2 实时总线入口 ----------

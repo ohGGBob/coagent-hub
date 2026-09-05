@@ -51,6 +51,18 @@ async function serve(argv) {
   if (Number.isFinite(flags.port) && flags.port > 0) process.env.COAGENT_PORT = String(flags.port);
   if (flags.dir) process.env.COAGENT_DATA = flags.dir;
 
+  // git 依赖检测：缺 git 时给可执行指引（代码协作层无法工作）
+  const cp = await import('node:child_process');
+  const g = cp.spawnSync('git', ['--version'], { encoding: 'utf8' });
+  if (g.status !== 0 || g.error) {
+    console.error(
+      '✗ 本机没有安装 git（或不在 PATH），Hub 无法启动代码协作层。\n' +
+      '  → 下载安装：https://git-scm.com/download/win （一路默认即可）\n' +
+      '  → 装完重新运行本程序。',
+    );
+    process.exit(1);
+  }
+
   const [{ createHub }, config, auth, os] = await Promise.all([
     import('../src/server.js'),
     import('../src/config.js'),
@@ -75,6 +87,7 @@ async function serve(argv) {
     for (const ip of ips) console.log(`  局域网访问   http://${ip}:${PORT}   ← 同学们的 agent 用这个`);
     console.log('');
     console.log(`  数据目录     ${PATHS.data}`);
+    console.log(`  网页面板     http://localhost:${PORT}/panel`);
     console.log(`  Agent 接入   把这句话发给同学的 agent：`);
     console.log(`               「fetch http://<上面任意地址>/guide 并照做」`);
     console.log('');

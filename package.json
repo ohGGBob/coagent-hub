@@ -11,7 +11,8 @@
     "start": "node scripts/serve.mjs",
     "smoke": "node scripts/smoke.js",
     "hub": "node scripts/hub.mjs",
-    "build:exe": "node scripts/build-exe.mjs"
+    "build:exe": "node scripts/build-exe.mjs",
+    "fixrefs": "node scripts/fix-refs.mjs"
   },
   "devDependencies": {
     "esbuild": "^0.28.2",

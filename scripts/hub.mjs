@@ -30,6 +30,26 @@ import { HubClient, connectHubWs } from '../src/sdk/client.js';
 
 const CONFIG_NAME = '.coagent.json';
 
+/** 需要本机 git 的命令（其余命令纯走 HTTP，无 git 也能用） */
+const GIT_NEEDED = new Set(['init', 'pull', 'push', 'status', 'sync']);
+
+/**
+ * git 依赖检测：缺 git 时给出新人能看懂的指引，而不是一堆 spawnSync 报错。
+ * @param {string} command
+ */
+function requireGit(command) {
+  if (!GIT_NEEDED.has(command)) return;
+  const r = spawnSync('git', ['--version'], { encoding: 'utf8' });
+  if (r.status !== 0 || r.error) {
+    die(
+      '本机没有安装 git（或不在 PATH），而 ' + command + ' 需要它。\n' +
+      '  → 下载安装：https://git-scm.com/download/win\n' +
+      '  → 安装时一路默认即可；装完重开终端再试。\n' +
+      '  （note / task / claim / whoami 等纯网络命令不受影响，可以先干着）',
+    );
+  }
+}
+
 export class CliError extends Error {}
 
 /** 解析时间间隔：纯数字=秒，支持 45s / 30m / 1h */
@@ -81,6 +101,7 @@ function parseArgs(argv) {
  */
 export async function run(argv) {
   const { command, flags, positional } = parseArgs(argv);
+  requireGit(command);
   // 只有 init 的位置参数是工作目录；note/task/claim/adduser 的位置参数分别是
   // 标题/任务id/用户id，绝不能吞进 dir（在工作目录内裸敲 note "标题" 是最常见用法）
   const dir = path.resolve(flags.get('dir') ?? (command === 'init' ? positional[0] : undefined) ?? process.cwd());

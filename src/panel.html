@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CoAgent Hub 管理面板</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --card: #ffffff; --line: #e3e6ea; --ink: #1f2733; --sub: #66707d;
+    --acc: #2f6fed; --ok: #1a9e5c; --warn: #d98426; --err: #d3455b; --chip: #eef2f8;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  body { font: 14px/1.6 "Segoe UI", "Microsoft YaHei", sans-serif; background: var(--bg); color: var(--ink); }
+  header { background: var(--card); border-bottom: 1px solid var(--line); padding: 10px 20px; display: flex; align-items: center; gap: 14px; }
+  header h1 { font-size: 16px; font-weight: 600; }
+  header .who { color: var(--sub); font-size: 12px; }
+  header .spacer { flex: 1; }
+  .ver { color: var(--sub); font-size: 12px; }
+  nav { display: flex; gap: 4px; padding: 10px 20px 0; }
+  nav button { border: 1px solid transparent; background: none; padding: 8px 16px; border-radius: 8px 8px 0 0; cursor: pointer; color: var(--sub); font-size: 14px; }
+  nav button.on { background: var(--card); border-color: var(--line); border-bottom-color: var(--card); color: var(--acc); font-weight: 600; margin-bottom: -1px; }
+  main { padding: 16px 20px 40px; max-width: 1080px; margin: 0 auto; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 16px; margin-bottom: 14px; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  input, select, textarea { border: 1px solid var(--line); border-radius: 6px; padding: 7px 10px; font: inherit; background: #fff; color: var(--ink); }
+  textarea { width: 100%; min-height: 54px; resize: vertical; }
+  button.act { background: var(--acc); color: #fff; border: 0; border-radius: 6px; padding: 7px 14px; cursor: pointer; font: inherit; }
+  button.ghost { background: var(--chip); color: var(--ink); border: 1px solid var(--line); border-radius: 6px; padding: 5px 10px; cursor: pointer; font: inherit; }
+  button.danger { background: #fff; color: var(--err); border: 1px solid var(--err); border-radius: 6px; padding: 5px 10px; cursor: pointer; font: inherit; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--sub); font-weight: 600; font-size: 12px; }
+  .chip { display: inline-block; background: var(--chip); border-radius: 10px; padding: 1px 10px; font-size: 12px; color: var(--sub); }
+  .chip.ok { background: #e5f5ec; color: var(--ok); }
+  .chip.warn { background: #fdf1e2; color: var(--warn); }
+  .chip.err { background: #fbe7ea; color: var(--err); }
+  .muted { color: var(--sub); font-size: 12px; }
+  #msg { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%); background: var(--ink); color: #fff; border-radius: 8px; padding: 8px 18px; display: none; max-width: 80%; }
+  .login-wrap { max-width: 380px; margin: 12vh auto; }
+  pre.card { white-space: pre-wrap; font: 12px/1.5 Consolas, monospace; }
+  .empty { color: var(--sub); text-align: center; padding: 24px 0; }
+</style>
+</head>
+<body>
+
+<div id="login" class="login-wrap">
+  <div class="card">
+    <h2 style="margin-bottom:6px">CoAgent Hub</h2>
+    <p class="muted" style="margin-bottom:12px">粘贴你的接入 token（找开组的同学要，或用接入卡片里的）</p>
+    <div class="row">
+      <input id="token-in" type="password" placeholder="tok_xxxxxxxx" style="flex:1">
+      <button class="act" onclick="login()">进入</button>
+    </div>
+    <p id="login-err" class="muted" style="color:var(--err);margin-top:8px"></p>
+  </div>
+</div>
+
+<div id="app" style="display:none">
+  <header>
+    <h1>👑 CoAgent Hub</h1>
+    <span class="who" id="who"></span>
+    <span class="spacer"></span>
+    <span class="ver" id="ver"></span>
+    <button class="ghost" onclick="logout()">退出</button>
+  </header>
+  <nav>
+    <button data-t="tasks" class="on" onclick="tab('tasks')">任务板</button>
+    <button data-t="ctx" onclick="tab('ctx')">共享上下文</button>
+    <button data-t="rev" onclick="tab('rev')">审核 / PR</button>
+    <button data-t="users" onclick="tab('users')">用户</button>
+  </nav>
+  <main id="view"></main>
+</div>
+
+<div id="msg"></div>
+
+<script>
+'use strict';
+var TOKEN = localStorage.getItem('coagent_token') || '';
+var ME = null;
+var TAB = 'tasks';
+var TIMER = null;
+
+function $(id) { return document.getElementById(id); }
+function esc(s) { return String(s ?? '').replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
+function msg(t) { var m = $('msg'); m.textContent = t; m.style.display = 'block'; clearTimeout(m._t); m._t = setTimeout(function () { m.style.display = 'none'; }, 3000); }
+function dt(s) { return new Date(s).toLocaleString('zh-CN', { hour12: false }); }
+
+function api(method, url, body) {
+  return fetch(url, {
+    method: method,
+    headers: Object.assign({ 'Content-Type': 'application/json' }, TOKEN ? { Authorization: 'Bearer ' + TOKEN } : {}),
+    body: body ? JSON.stringify(body) : undefined,
+  }).then(function (r) {
+    return r.json().then(function (j) {
+      if (!r.ok) throw new Error((j.error && j.error.message) || ('HTTP ' + r.status));
+      return j;
+    });
+  });
+}
+
+function login() {
+  TOKEN = $('token-in').value.trim();
+  api('GET', '/me').then(function (me) {
+    ME = me;
+    localStorage.setItem('coagent_token', TOKEN);
+    boot();
+  }).catch(function (e) {
+    $('login-err').textContent = '登录失败：' + e.message;
+  });
+}
+function logout() { localStorage.removeItem('coagent_token'); location.reload(); }
+
+function boot() {
+  $('login').style.display = 'none';
+  $('app').style.display = 'block';
+  $('who').textContent = '已登录：' + ME.name + '（' + ME.userId + '）';
+  api('GET', '/healthz').then(function (h) { $('ver').textContent = 'v' + h.version + ' · lastSeq ' + h.lastSeq; }).catch(function () {});
+  tab('tasks');
+  if (TIMER) clearInterval(TIMER);
+  TIMER = setInterval(function () { render(); }, 5000);
+}
+
+function tab(t) {
+  TAB = t;
+  document.querySelectorAll('nav button').forEach(function (b) { b.classList.toggle('on', b.dataset.t === t); });
+  render();
+}
+
+function render() {
+  if (TAB === 'tasks') viewTasks();
+  else if (TAB === 'ctx') viewCtx();
+  else if (TAB === 'rev') viewRev();
+  else if (TAB === 'users') viewUsers();
+}
+
+/* ---------------- 任务板 ---------------- */
+function viewTasks() {
+  api('GET', '/tasks').then(function (r) {
+    var rows = r.tasks.map(function (t) {
+      var chip = t.status === 'done' ? '<span class="chip ok">完成</span>'
+        : t.status === 'in_progress' ? '<span class="chip warn">进行中</span>'
+        : '<span class="chip">待认领</span>';
+      var acts = '';
+      if (t.status === 'open') acts = '<button class="ghost" onclick="claim(\'' + t.id + '\')">认领</button>';
+      else if (t.assignee === ME.userId && t.status !== 'done') acts = '<button class="ghost" onclick="done(\'' + t.id + '\')">标记完成</button>';
+      return '<tr><td>' + chip + '</td><td><b>' + esc(t.title) + '</b><div class="muted">' + esc(t.body || '') + '</div></td><td class="muted">' + esc(t.assignee || '—') + '</td><td class="muted">' + dt(t.createdAt) + '</td><td>' + acts + '</td></tr>';
+    }).join('');
+    $('view').innerHTML =
+      '<div class="card"><div class="row">' +
+      '<input id="tk-title" placeholder="任务标题" style="flex:2;min-width:180px">' +
+      '<input id="tk-body" placeholder="描述（可选）" style="flex:3;min-width:220px">' +
+      '<button class="act" onclick="createTask()">建任务</button></div></div>' +
+      '<div class="card"><table><tr><th>状态</th><th>任务</th><th>认领人</th><th>创建</th><th></th></tr>' +
+      (rows || '<tr><td colspan="5" class="empty">还没有任务</td></tr>') + '</table></div>';
+  }).catch(function (e) { errView(e); });
+}
+function createTask() {
+  var title = $('tk-title').value.trim();
+  if (!title) return msg('标题不能为空');
+  api('POST', '/tasks', { title: title, body: $('tk-body').value.trim() }).then(function () { msg('✓ 任务已建'); render(); });
+}
+function claim(id) { api('POST', '/tasks/' + id + '/claim').then(function () { msg('✓ 已认领'); render(); }).catch(function (e) { msg('✗ ' + e.message); }); }
+function done(id) { api('PATCH', '/tasks/' + id, { status: 'done' }).then(function () { msg('✓ 已完成'); render(); }).catch(function (e) { msg('✗ ' + e.message); }); }
+
+/* ---------------- 上下文 ---------------- */
+var ctxQ = '';
+function viewCtx() {
+  var qs = '/context?limit=30' + (ctxQ ? '&q=' + encodeURIComponent(ctxQ) : '');
+  api('GET', qs).then(function (r) {
+    var rows = r.entries.map(function (e) {
+      var chip = { decision: '决策', progress: '进度', blocker: '阻塞', note: '笔记', summary: '总结' }[e.type] || e.type;
+      return '<tr><td><span class="chip">' + chip + '</span></td><td><b>' + esc(e.title) + '</b>' +
+        (e.body ? '<div class="muted">' + esc(e.body) + '</div>' : '') +
+        '<div class="muted">' + esc(e.authorId) + ' · ' + dt(e.createdAt) + (e.tags && e.tags.length ? ' · #' + esc(e.tags.join(' #')) : '') + '</div></td></tr>';
+    }).join('');
+    $('view').innerHTML =
+      '<div class="card"><div class="row">' +
+      '<select id="cx-type"><option value="">类型</option><option>decision</option><option>progress</option><option>blocker</option><option>note</option><option>summary</option></select>' +
+      '<input id="cx-title" placeholder="一句话标题" style="flex:2;min-width:180px">' +
+      '<input id="cx-body" placeholder="正文（可选）" style="flex:3;min-width:220px">' +
+      '<button class="act" onclick="postCtx()">上墙</button></div></div>' +
+      '<div class="card"><div class="row" style="margin-bottom:10px">' +
+      '<input id="cx-q" placeholder="搜索：支持多词，按相关度排序" value="' + esc(ctxQ) + '" style="flex:1" onkeydown="if(event.key===\'Enter\')searchCtx()">' +
+      '<button class="ghost" onclick="searchCtx()">搜索</button></div>' +
+      '<table>' + (rows || '<tr><td class="empty">没有匹配的上下文</td></tr>') + '</table></div>';
+  }).catch(function (e) { errView(e); });
+}
+function searchCtx() { ctxQ = $('cx-q').value.trim(); render(); }
+function postCtx() {
+  var title = $('cx-title').value.trim();
+  if (!title) return msg('标题不能为空');
+  api('POST', '/context', { type: $('cx-type').value || 'note', title: title, body: $('cx-body').value.trim() })
+    .then(function () { msg('✓ 已上墙，全组可见'); render(); });
+}
+
+/* ---------------- 审核 ---------------- */
+function viewRev() {
+  api('GET', '/reviews').then(function (r) {
+    var rows = r.reviews.map(function (v) {
+      var chip = v.status === 'merged' ? '<span class="chip ok">已合并</span>'
+        : v.status === 'rejected' ? '<span class="chip err">已拒绝</span>'
+        : '<span class="chip warn">待审核</span>';
+      var acts = '';
+      if (v.status === 'open') {
+        acts = '<button class="ghost" onclick="reviewAct(\'approve\',\'' + v.id + '\')">批准</button> ' +
+               '<button class="danger" onclick="reviewAct(\'reject\',\'' + v.id + '\')">拒绝</button> ' +
+               '<button class="act" onclick="reviewAct(\'merge\',\'' + v.id + '\')">合并入 main</button>';
+      }
+      return '<tr><td>' + chip + '</td><td><b>' + esc(v.branch) + '</b><div class="muted">发起：' + esc(v.userId) + ' · ' + dt(v.createdAt) + '</div></td><td>' + acts + '</td></tr>';
+    }).join('');
+    $('view').innerHTML =
+      '<div class="card"><div class="row">' +
+      '<input id="rv-branch" placeholder="分支名，如 dev/alice" style="flex:2;min-width:180px">' +
+      '<button class="act" onclick="createRev()">发起 PR（请求合入 main）</button></div>' +
+      '<p class="muted" style="margin-top:6px">main 受保护：只有经这里批准后的 fast-forward 才能合入。</p></div>' +
+      '<div class="card"><table><tr><th>状态</th><th>分支</th><th>操作</th></tr>' +
+      (rows || '<tr><td colspan="3" class="empty">没有审核记录</td></tr>') + '</table></div>';
+  }).catch(function (e) { errView(e); });
+}
+function createRev() {
+  var branch = $('rv-branch').value.trim();
+  if (!branch) return msg('分支名不能为空');
+  api('POST', '/reviews', { branch: branch }).then(function () { msg('✓ PR 已发起'); render(); }).catch(function (e) { msg('✗ ' + e.message); });
+}
+function reviewAct(act, id) {
+  api('POST', '/reviews/' + id + '/' + act, act === 'reject' ? { reason: '面板操作拒绝' } : {})
+    .then(function () { msg('✓ ' + act + ' 成功'); render(); }).catch(function (e) { msg('✗ ' + e.message); });
+}
+
+/* ---------------- 用户 ---------------- */
+function viewUsers() {
+  api('GET', '/users').then(function (r) {
+    var rows = r.users.map(function (u) {
+      return '<tr><td><b>' + esc(u.id) + '</b></td><td>' + esc(u.name || '') + '</td><td class="muted">' + esc((u.scopes || []).join(', ')) + '</td>' +
+        '<td><button class="ghost" onclick="rotateUser(\'' + u.id + '\')">换 token</button> ' +
+        '<button class="danger" onclick="delUser(\'' + u.id + '\')">注销</button></td></tr>';
+    }).join('');
+    $('view').innerHTML =
+      '<div class="card"><div class="row">' +
+      '<input id="us-id" placeholder="userId（英文）" style="width:160px">' +
+      '<input id="us-name" placeholder="显示名" style="width:160px">' +
+      '<button class="act" onclick="createUser()">开户</button></div>' +
+      '<p class="muted" style="margin-top:6px">开户成功会显示一次 token，请立刻复制转给同学。</p></div>' +
+      '<div class="card"><table><tr><th>ID</th><th>名字</th><th>权限</th><th></th></tr>' + rows + '</table></div>';
+  }).catch(function (e) { errView(e); });
+}
+function createUser() {
+  var id = $('us-id').value.trim();
+  if (!id) return msg('userId 不能为空');
+  api('POST', '/users', { id: id, name: $('us-name').value.trim() }).then(function (r) {
+    alert('✓ 开户成功！token（只显示这一次）：\n\n' + r.user.token + '\n\n把接入卡片连同 token 一起发给同学。');
+    render();
+  }).catch(function (e) { msg('✗ ' + e.message); });
+}
+function rotateUser(id) {
+  if (!confirm('确定轮换 ' + id + ' 的 token？旧 token 立即失效。')) return;
+  api('POST', '/users/' + id + '/rotate').then(function (r) {
+    alert('✓ 新 token（只显示这一次）：\n\n' + r.user.token);
+    render();
+  }).catch(function (e) { msg('✗ ' + e.message); });
+}
+function delUser(id) {
+  if (!confirm('确定注销 ' + id + '？其分支仍保留。')) return;
+  api('DELETE', '/users/' + id).then(function () { msg('✓ 已注销'); render(); }).catch(function (e) { msg('✗ ' + e.message); });
+}
+
+function errView(e) {
+  $('view').innerHTML = '<div class="card"><p style="color:var(--err)">✗ ' + esc(e.message) + '</p>' +
+    (String(e.message).indexOf('admin') >= 0 ? '<p class="muted">当前账号没有该权限（需要管理员 token）。</p>' : '') + '</div>';
+}
+
+if (TOKEN) {
+  api('GET', '/me').then(function (me) { ME = me; boot(); }).catch(function () { localStorage.removeItem('coagent_token'); TOKEN = ''; });
+}
+</script>
+</body>
+</html>
