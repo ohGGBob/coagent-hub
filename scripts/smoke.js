@@ -23,7 +23,7 @@ process.env.COAGENT_DATA = path.join(TMP_ROOT, 'data');
 
 const { PATHS } = await import('../src/config.js');
 const { createHub } = await import('../src/server.js');
-const { HubClient } = await import('../src/sdk/client.js');
+const { HubClient, connectHubWs } = await import('../src/sdk/client.js');
 const { defaultTokensActive } = await import('../src/auth.js');
 
 // ---------------------------------------------------------------- 测试骨架
@@ -287,9 +287,49 @@ try {
     '注销后其凭证立即失效',
   );
 
-  // ------------------------------------------------------------ 10. Phase 2 挂点
-  section('10. Phase 2 挂点');
-  await rejects(() => alice.subscribeEvents(), 501, '/ws 占位返回 501');
+  // ------------------------------------------------------------ 10. 实时总线（WebSocket）
+  section('10. 实时总线（WebSocket）');
+  await rejects(() => alice.request('GET', '/ws'), 426, '普通 HTTP 访问 /ws → 426 要求升级连接');
+
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  let wsOpenResolve;
+  const wsOpened = new Promise((r) => (wsOpenResolve = r));
+  const received = [];
+  const ws = connectHubWs({
+    hubUrl,
+    token: 'tok_bob_0002',
+    types: ['task.created', 'task.claimed', 'agent.status'],
+    onEvent: (ev) => received.push(ev),
+    onOpen: () => wsOpenResolve(),
+  });
+  await wsOpened;
+  ok(true, 'bob 建立实时连接（只订阅 task 与 agent.status）');
+
+  await alice.task.create({ title: '实时总线验证任务' });
+  await alice.context.append({ type: 'note', title: '这条不该推给 bob 的实时连接' });
+  await sleep(300);
+  ok(
+    received.some((e) => e.type === 'task.created' && e.payload.title === '实时总线验证任务'),
+    '任务事件实时到达',
+  );
+  ok(!received.some((e) => e.type === 'context.appended'), '订阅过滤生效：context 事件未推送');
+
+  ws.send({ type: 'agent.status', payload: { state: 'working', harness: 'claude-code' } });
+  await sleep(300);
+  const allEvents = await alice.request('GET', '/events', { query: { after: 0, limit: 1000 } });
+  ok(
+    allEvents.events.some((e) => e.type === 'agent.status' && e.payload.harness === 'claude-code'),
+    '经 WS 上报的 agent.status 已落盘',
+  );
+
+  // 断线重连的兜底：since=0 全量回放（含断线期间错过的所有事件）
+  const replayed = [];
+  const rws = connectHubWs({ hubUrl, token: 'tok_alice_0001', since: 0, onEvent: (ev) => replayed.push(ev) });
+  await sleep(400);
+  ok(replayed.length >= allEvents.events.length, `重连回放完整（收到 ${replayed.length} 条）`);
+  rws.close();
+  ws.close();
+  await sleep(100);
 
   // ------------------------------------------------------------ 11. 整仓读通道 + agent CLI
   section('11. 整仓读通道与 agent CLI');
@@ -327,6 +367,28 @@ try {
 
   const statusOut = await cli(['status', '--dir', cliWork]);
   ok(statusOut.includes('任务板') && statusOut.includes('dev/alice'), 'CLI status 输出任务板与分支差距');
+
+  // 体验简化命令：note / task / claim / adduser
+  const noteOut = await cli(['note', 'CLI 快捷笔记', '--body', '不用写代码也能上墙', '--dir', cliWork]);
+  ok(noteOut.includes('CLI 快捷笔记'), 'CLI note 一句话上墙');
+  ok(
+    (await alice.context.query({ q: 'CLI 快捷笔记' })).entries.length === 1,
+    'note 的内容确实进了共享上下文',
+  );
+
+  const taskOut = await cli(['task', 'CLI 快捷任务', '--dir', cliWork]);
+  const taskIdShort = /✓ 任务已创建：([0-9a-f]{8})/.exec(taskOut)?.[1];
+  ok(!!taskIdShort, 'CLI task 一句话建任务');
+  const claimOut = await cli(['claim', taskIdShort, '--dir', cliWork]);
+  ok(claimOut.includes('已认领'), 'CLI claim 认领成功');
+
+  const addOut = await cli(['adduser', 'erin', 'Erin', '--hub', hubUrl, '--token', 'tok_alice_0001']);
+  ok(addOut.includes('发给这位同学') && addOut.includes('--token tok_'), 'CLI adduser 打印可转发的接入卡片');
+  const erinToken = /--token (tok_\S+)/.exec(addOut)?.[1];
+  ok(
+    (await new HubClient({ hubUrl, token: erinToken }).me()).userId === 'erin',
+    '接入卡片里的 token 真实可用',
+  );
 
   // ------------------------------------------------------------ 12. 收尾一致性
   section('12. 一致性');

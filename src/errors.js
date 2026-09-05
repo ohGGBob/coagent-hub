@@ -40,3 +40,5 @@ export const forbidden = (m, d) => new HubError(403, 'FORBIDDEN', m, d);
 export const notFound = (m, d) => new HubError(404, 'NOT_FOUND', m, d);
 export const conflict = (m, d) => new HubError(409, 'CONFLICT', m, d);
 export const notImplemented = (m, d) => new HubError(501, 'NOT_IMPLEMENTED', m, d);
+/** HTTP 426：请升级协议（WebSocket 入口对普通 HTTP 请求的标准回答） */
+export const newUpgradeRequired = (m, d) => new HubError(426, 'UPGRADE_REQUIRED', m, d);

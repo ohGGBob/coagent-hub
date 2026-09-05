@@ -22,7 +22,8 @@ import { createTaskStore } from './tasks.js';
 import { createReviewStore } from './reviews.js';
 import { loadUsers, verify, requireScope, createUser, listUsersPublic, rotateToken, deleteUser, defaultTokensActive } from './auth.js';
 import * as repo from './git-repo.js';
-import { HubError, badRequest, notFound, notImplemented, forbidden } from './errors.js';
+import { HubError, badRequest, notFound, newUpgradeRequired, forbidden } from './errors.js';
+import { attachWebSocket } from './ws.js';
 
 const MAX_BODY = 128 * 1024 * 1024;
 
@@ -80,9 +81,9 @@ export function createHub() {
     return { userId: user.id, name: user.name, token: user.token, scopes: user.scopes };
   });
 
-  // ---------- Phase 2 挂点 ----------
+  // ---------- Phase 2 实时总线入口 ----------
   add('GET', /^\/ws$/, null, () => {
-    throw notImplemented('实时总线在 Phase 2 提供（事件订阅点已就绪，见 eventlog.subscribe）');
+    throw newUpgradeRequired('本端点是 WebSocket 入口：请发起 Upgrade 升级连接 ws://…/ws?token=<token>（SDK 的 connectHubWs 已封装）');
   });
 
   // ---------- 用户管理（开户 / 轮换 / 注销，admin:write）----------
@@ -353,7 +354,13 @@ export function createHub() {
   server.keepAliveTimeout = 120_000;
   server.headersTimeout = 125_000; // 须 > keepAliveTimeout
 
-  return { server, eventLog, context, tasks, reviews, hub: { eventLog, context, tasks, reviews } };
+  // 实时总线：升级请求走 ws://…/ws?token=…，事件订阅点在 eventLog
+  const bus = attachWebSocket(server, {
+    verify: (header) => verify(header),
+    eventLog,
+  });
+
+  return { server, eventLog, context, tasks, reviews, bus };
 }
 
 /**
@@ -389,6 +396,8 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     console.log('[CoAgent Hub] 同学们的 agent 用以下地址接入（同一网络时）：');
     for (const ip of ips) console.log(`[CoAgent Hub]   http://${ip}:${PORT}`);
     console.log('[CoAgent Hub] 跨网络接入见 README.md（Tailscale 虚拟局域网）');
+    console.log('[CoAgent Hub] 给同学开户：npm run hub -- adduser <userId> "显示名" --token <管理员token>');
+    console.log('[CoAgent Hub] API 文档：README.md ｜ 冒烟自检：npm run smoke');
 
     // 只要还有账号在用种子默认 token，就在启动时第一时间警告更换
     const defaultUsers = defaultTokensActive();

@@ -90,6 +90,12 @@ Hub 内部模块：Auth&分支权限 / Git 编排器 / 上下文存储 / 实时�
   agent 命令行工具 `scripts/hub.mjs`（`npm run hub -- init/pull/push/status/sync/whoami`，支持内嵌调用），部署/接入文档 `README.md`。
 - **整仓读通道已补齐**：`GET /repo/info`（分支+sha）、`GET /repo/bundle`（整仓快照，可直接 git clone）——跨机场景 agent 拿不到主机路径，这是代码读的唯一入口；CLI 的 `init/pull` 建立在其上。
 - **推送通道定稿**：`git fetch <bundle> ref:ref` 取代 unbundle（尤利乌斯修正）——真正推进目标 ref 且天然拒绝非快进。
+- **Phase 2 实时总线已提前落地**（2026-09-05，零依赖手写 RFC 6455）：
+  - `src/wire.js` 共用帧编解码（客户端帧掩码/服务端帧不掩码）、`src/ws.js` 服务端（订阅过滤 types/taskId、since 重连回放、心跳保活、agent.status 上报落盘）、`src/sdk/ws-client.js` 客户端（指数退避自动重连，重连带 since 补缺口）。
+  - CLI `watch` 命令：`--interval 30m` 定时轮询，`--live 1` 实时+轮询混合——适配不同任务的更新节奏。
+  - 多 harness 接入指南已写入 README（每 harness 一个 userId，如 julius-wb / alice-codex，CLI 指令片段可贴进 AGENTS.md/CLAUDE.md）。
+  - 冒烟 **69 项全绿**（新增：实时到达、订阅过滤、agent.status 落盘、since 全量回放）。
+  - **关键调试教训**：握手响应与首批帧被 TCP 合并在 `head` 参数里，客户端与服务端都必须把 `head` 喂给帧解析器，否则首帧（如 hello）静默丢失；另外给 socket 挂 `data` 探针会破坏 HTTP 客户端的 upgrade 解析（探针即干扰源）。
 - **间歇性 ECONNRESET 已根治**：根因是 Node 服务端默认 keepAliveTimeout=5s，在 git 子进程同步执行造成的请求空档期掐掉闲置连接，客户端复用即被 RST。修复：`server.keepAliveTimeout=120s`（headersTimeout 相应加大）。
 - 已验证：鉴权、任务认领冲突、分支权限拦截、上下文只读共享+作者撤回、事件回放与增量游标、PR 审核+快进合并、强制释放他人任务需 approved 审核、用户管理 API（开户/轮换/注销）、**CLI 全流程**（init 带远端已有分支状态切分支，避免非快进拒绝；push；pull；status）。
 - **多机就绪**：服务监听所有网卡，启动时打印局域网接入地址；跨网络走 Tailscale（README 有步骤）。

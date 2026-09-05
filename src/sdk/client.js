@@ -35,6 +35,9 @@ export class HubError extends Error {
   }
 }
 
+export { connectHubWs } from './ws-client.js';
+import { connectHubWs } from './ws-client.js';
+
 export class HubClient {
   /**
    * @param {{hubUrl: string, token: string, fetchImpl?: typeof fetch}} opts
@@ -238,11 +241,20 @@ export class HubClient {
   }
 
   /**
-   * Phase 2 挂点：实时订阅。当前 Hub 未开放 /ws，调用会收到 501。
-   * @returns {Promise<never>}
+   * 实时订阅（WebSocket）。参数与返回句柄见 {@link connectHubWs}。
+   *
+   * ```js
+   * const ws = hub.connect({ types: ['task.created','message.posted'], since: hub.lastSeq, onEvent: console.log });
+   * // ……之后 ws.close()
+   * ```
    */
-  subscribeEvents() {
-    return this.request('GET', '/ws');
+  connect(opts = {}) {
+    return connectHubWs({
+      hubUrl: this.hubUrl,
+      token: this.token,
+      since: this.lastSeq, // 默认从 REST 游标续传，实时与轮询共用同一游标
+      ...opts,
+    });
   }
 }
 

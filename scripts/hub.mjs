@@ -26,11 +26,19 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
-import { HubClient } from '../src/sdk/client.js';
+import { HubClient, connectHubWs } from '../src/sdk/client.js';
 
 const CONFIG_NAME = '.coagent.json';
 
 export class CliError extends Error {}
+
+/** 解析时间间隔：纯数字=秒，支持 45s / 30m / 1h */
+function parseInterval(text) {
+  const m = /^(\d+)(s|m|h)?$/i.exec(String(text ?? '').trim());
+  if (!m) die(`无法识别的时间间隔：${text}（示例：300 / 45s / 30m / 1h）`);
+  const unit = (m[2] ?? 's').toLowerCase();
+  return Number(m[1]) * { s: 1, m: 60, h: 3600 }[unit];
+}
 
 const die = (msg) => {
   throw new CliError(msg);
@@ -192,6 +200,76 @@ export async function run(argv) {
       await handlers.status();
     },
 
+    /**
+     * 开户并直接输出可转发给同学的「接入卡片」——开户到能干活一步到位。
+     * 需要管理员 token：--token / HUB_TOKEN / 工作目录配置均可。
+     */
+    async adduser() {
+      const id = positional[0];
+      const name = positional[1];
+      if (!id) die('用法：adduser <userId> [显示名]');
+      const cfg = fs.existsSync(path.join(dir, CONFIG_NAME)) ? loadConfig(dir) : undefined;
+      const client = clientFor(cfg);
+      const { user } = await client.users.create({ id, name });
+      const url = client.hubUrl;
+      log(`✓ 已开户：${user.id}（${user.name}）`);
+      log('');
+      log('—— 把下面整段发给这位同学即可 ——');
+      log('┌─────────────────────────────────────────────');
+      log(`│ 1. 找 ${user.name} 要一份本项目的代码副本（npm run hub 的项目目录）`);
+      log(`│ 2. 装好 Node ≥18 和 git 后，在项目目录执行：`);
+      log(`│    npm run hub -- init ./my-work --hub ${url} --token ${user.token}`);
+      log(`│ 3. 每天开工：npm run hub -- sync --dir ./my-work`);
+      log(`│ 4. 改完代码：npm run hub -- push --dir ./my-work`);
+      log('└─────────────────────────────────────────────');
+      log('');
+      log('⚠ token 只显示这一次，请同学妥善保存；泄露就用 rotate 换新。');
+    },
+
+    /** 一句话贴共享笔记（agent 不写代码也能共享上下文） */
+    async note() {
+      const cfg = loadConfig(dir);
+      const client = clientFor(cfg);
+      const title = positional[0] ?? flags.get('title');
+      if (!title) die('用法：note "标题" [--body 正文] [--type decision|progress|blocker|note|summary] [--task 任务id]');
+      const { entry } = await client.context.append({
+        type: flags.get('type') ?? 'note',
+        title,
+        body: flags.get('body') ?? '',
+        taskId: flags.get('task') || undefined,
+        tags: flags.get('tags') ? flags.get('tags').split(',') : [],
+      });
+      log(`✓ 笔记已上墙：[${entry.type}] ${entry.title}`);
+    },
+
+    /** 一句话建任务 */
+    async task() {
+      const cfg = loadConfig(dir);
+      const client = clientFor(cfg);
+      const title = positional[0] ?? flags.get('title');
+      if (!title) die('用法：task "任务标题" [--body 描述]');
+      const { task } = await client.task.create({ title, description: flags.get('body') ?? '' });
+      log(`✓ 任务已创建：${task.id.slice(0, 8)} ${task.title}`);
+      log(`  认领：npm run hub -- claim ${task.id}`);
+    },
+
+    /** 认领任务：支持完整 id 或前缀（status 输出的 8 位短 id 就够用） */
+    async claim() {
+      const cfg = loadConfig(dir);
+      const client = clientFor(cfg);
+      let id = positional[0];
+      if (!id) die('用法：claim <任务id 或前缀>（从 status / task 输出里复制）');
+
+      const { tasks } = await client.task.list();
+      const hits = tasks.filter((t) => t.id.startsWith(id) || t.title === id);
+      if (hits.length === 0) die(`没有匹配的任务：${id}`);
+      if (hits.length > 1) die(`前缀有歧义，命中 ${hits.length} 个任务，请用更长的 id`);
+      id = hits[0].id;
+
+      const { task } = await client.task.claim(id);
+      log(`✓ 已认领：${task.title}`);
+    },
+
     async whoami() {
       const cfg = fs.existsSync(path.join(dir, CONFIG_NAME)) ? loadConfig(dir) : undefined;
       const client = clientFor(cfg);
@@ -199,6 +277,49 @@ export async function run(argv) {
       log(`userId: ${me.userId}`);
       log(`name:   ${me.name}`);
       log(`scopes: ${me.scopes.join(', ')}`);
+    },
+
+    /**
+     * 常驻监听：默认按 interval 轮询；--live 同时开 WebSocket 实时推送，
+     * 轮询作断线安全网——正好是设计文档的「实时 + 异步」混合节奏。
+     */
+    async watch() {
+      const cfg = loadConfig(dir);
+      const client = clientFor(cfg);
+      const intervalMs = parseInterval(flags.get('interval') ?? '5m') * 1000;
+      const live = flags.get('live') === '1' || flags.get('live') === 'true';
+      const since = Number(flags.get('since') ?? 0);
+
+      const printEvent = (ev) => log(`[事件] #${ev.seq} ${ev.type}　${ev.authorId}　${JSON.stringify(ev.payload)}`);
+
+      log(`开始监听（${live ? '实时+轮询' : '轮询'}，间隔 ${Math.round(intervalMs / 1000)}s，Ctrl+C 退出）`);
+
+      if (live) {
+        connectHubWs({
+          hubUrl: client.hubUrl,
+          token: client.token,
+          since,
+          onEvent: (ev) => (ev.type === 'hello' ? log(`[实时] 已连接，服务端 lastSeq=${ev.lastSeq}`) : printEvent(ev)),
+          onError: (err) => console.error(`[实时] ${err.message}（将自动重连）`),
+        });
+      }
+
+      let lastSeq = since;
+      const poll = async () => {
+        try {
+          const { events } = await client.request('GET', '/events', { query: { after: lastSeq } });
+          for (const ev of events) {
+            if (!live || ev.seq > lastSeq) printEvent(ev); // live 模式下避免与 WS 重复打印
+            lastSeq = Math.max(lastSeq, ev.seq);
+          }
+        } catch (err) {
+          console.error(`[轮询] ${err.message}（继续重试）`);
+        }
+      };
+      await poll();
+      setInterval(poll, intervalMs).unref();
+      // keep alive
+      setInterval(() => {}, 1 << 30);
     },
   };
 
@@ -212,10 +333,14 @@ export const USAGE = `
 CoAgent agent 命令行工具
 
   init <dir>    从 Hub 拉取项目并建立自己的私有分支
+  adduser <id>  开户并打印可转发的接入卡片（需管理员 token）
+  note "标题"   一句话上墙共享笔记（--body 正文 --type 类型 --task 任务）
+  task "标题"   一句话建任务（--body 描述）／ claim <id> 认领
   pull          拉取全员最新进度
   push          推送本地改动到自己的私有分支
   status        任务板 + 最近动态 + 分支差距
   sync          pull + status（推荐每天开工前）
+  watch         常驻监听事件（--interval 30m 定轮询；--live 1 加实时推送）
   whoami        查看当前身份
 
 参数：--hub <url>  --token <token>  --dir <工作目录>
