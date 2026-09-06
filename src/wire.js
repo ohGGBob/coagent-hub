@@ -16,6 +16,8 @@ import crypto from 'node:crypto';
 const WS_GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11';
 
 /** @param {string} key 客户端的 Sec-WebSocket-Key */
+// RFC 6455 §4.2.1 规定 Sec-WebSocket-Accept 固定用 SHA-1（仅作握手 nonce 派生，
+// 不承载机密性），这是协议常量而非加密强度选择，不可更换算法。
 export function acceptKey(key) {
   return crypto.createHash('sha1').update(key + WS_GUID).digest('base64');
 }
@@ -63,13 +65,19 @@ export function encodeFrame(opcode, payload, opts = {}) {
 
 /**
  * 创建流式帧解析器。把 socket 的 data 块依次喂进来，每解析出完整帧回调一次。
- * @param {(frame: {fin: boolean, opcode: number, payload: Buffer}) => void} onFrame
+ * 单帧超过 maxFrameSize 时回调 `{ error }` 并进入死状态（不再消费任何数据），
+ * 由调用方负责关闭连接——防止超长帧在内存里无限堆积。
+ * @param {(frame: {fin: boolean, opcode: number, payload: Buffer, error?: string}) => void} onFrame
+ * @param {{maxFrameSize?: number}} [opts]
  * @returns {(chunk: Buffer) => void}
  */
-export function createFrameParser(onFrame) {
+export function createFrameParser(onFrame, opts = {}) {
+  const maxFrameSize = opts.maxFrameSize ?? 1024 * 1024;
   let buf = Buffer.alloc(0);
+  let dead = false;
 
   return function feed(chunk) {
+    if (dead) return;
     buf = buf.length ? Buffer.concat([buf, chunk]) : chunk;
 
     for (;;) {
@@ -88,6 +96,13 @@ export function createFrameParser(onFrame) {
         if (buf.length < 10) return;
         len = Number(buf.readBigUInt64BE(2));
         offset = 10;
+      }
+
+      if (len > maxFrameSize) {
+        dead = true;
+        buf = Buffer.alloc(0);
+        onFrame({ fin: false, opcode: 0, payload: Buffer.alloc(0), error: `帧过大：${len} 字节（上限 ${maxFrameSize}）` });
+        return;
       }
 
       /** @type {Buffer|null} */

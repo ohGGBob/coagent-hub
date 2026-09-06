@@ -3,6 +3,27 @@
 所有重要变更记录在此文件。格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [0.7.1] — 2026-09-06
+
+### 修复
+- **看板拖拽回归**：面板拖拽改走 `claim` / `release` 专用接口（上一版服务端已禁止 PATCH 携带 assignee，面板未同步导致移动任务卡报 400）
+- **面板致命语法错误**：移除 `CTX_Q` / `CTX_TYPE` 的重复 `let` 声明（同作用域重复声明会使整个面板脚本失效）
+- **登录收紧**：`POST /auth/login` 必须 userId + token 双匹配（此前只带 token 可命中任意账号）
+- **bootstrap 限回环**：`GET /auth/bootstrap`（含种子管理员 token）仅允许本机 127.0.0.1 访问
+- **任务删除权限**：仅创建者或 `admin:write` 可删任务（此前任何持 task:write 者可删任意任务）
+- **WebSocket 鉴权**：WS 连接同样要求 `events:read` scope
+
+### 安全加固
+- **输入校验**：`tags` / `labels` 必须是字符串数组（此前传字符串会让 `/search` 对所有人 500）；`status` 限定 open/claimed/done 枚举；PATCH 直改 `claimed` 被拒（走 claim），`open` 归位时自动清空 assignee，释放他人认领的任务一律走 release+审核
+- **长度上限**：任务 title 300 / description 100k、上下文 title 300 / body 100k、评论与群聊消息 10k、`agent.status` payload 8KB
+- **WS 帧上限**：单帧超过 1MB 回 CLOSE(1009) 并断开，防止超长帧堆积内存、灌爆事件日志
+- **常量时间 token 比较**：鉴权与登录改为先哈希再 `timingSafeEqual`，消除逐字节比较的时序侧信道
+- **healthz 瘦身**：不再返回用户清单、不再执行 git 子进程，仅暴露 ok/version/lastSeq/uptimeSec（无鉴权端点最小暴露面）
+- **Markdown 链接白名单**：面板 Markdown 渲染只放行 http(s)/mailto/相对路径，拦截 `javascript:` 伪协议；外链补 `rel="noopener noreferrer"`
+
+### 变更
+- 冒烟测试新增「输入校验与加固回归」一节（82 → 96 项断言）
+
 ## [0.7.0] — 2026-09-06
 
 ### 新增

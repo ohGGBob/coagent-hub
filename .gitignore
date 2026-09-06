@@ -21,3 +21,7 @@ dist/
 Thumbs.db
 # ---- 发布物料（exe 走 GitHub Releases）----
 release/
+
+# ---- 本地工具目录 ----
+.mimosa/
+.probe/

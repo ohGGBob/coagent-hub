@@ -32,15 +32,15 @@ import { notFound, conflict, forbidden, badRequest } from './errors.js';
 
 /**
  * @param {object} deps
- * @param {string} [deps.file]
  * @param {ReturnType<import('./eventlog.js').createEventLog>} deps.eventLog
  * @param {(branch: string, base: string) => {fastForward: boolean, from?: string, to?: string, ahead?: string[], behind?: string[]}} deps.mergeFF
  */
-export function createReviewStore({ file = PATHS.reviews, eventLog, mergeFF }) {
+export function createReviewStore({ eventLog, mergeFF }) {
+  // 存储路径固定为模块常量，不接受调用方注入
   /** @returns {Record<string, Review>} */
-  const load = () => readJson(file, {});
+  const load = () => readJson(PATHS.reviews, {});
   /** @param {Record<string, Review>} state */
-  const save = (state) => writeJson(file, state);
+  const save = (state) => writeJson(PATHS.reviews, state);
 
   /**
    * @param {string} id

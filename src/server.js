@@ -22,7 +22,7 @@ import { createTaskStore } from './tasks.js';
 import { createReviewStore } from './reviews.js';
 import { createCommentStore } from './comments.js';
 import { createFileStore } from './files.js';
-import { loadUsers, verify, requireScope, createUser, listUsersPublic, rotateToken, deleteUser, getBootstrapInfo } from './auth.js';
+import { loadUsers, verify, requireScope, createUser, listUsersPublic, rotateToken, deleteUser, getBootstrapInfo, authenticate } from './auth.js';
 import * as repo from './git-repo.js';
 import { HubError, badRequest, notFound, newUpgradeRequired, forbidden } from './errors.js';
 import { guideMarkdown } from './guide.js';
@@ -97,7 +97,7 @@ export function createHub() {
   loadUsers();
   repo.ensureRepo();
 
-  const eventLog = createEventLog(PATHS.events);
+  const eventLog = createEventLog();
   const context = createContextStore({ eventLog });
   const reviews = createReviewStore({
     eventLog,
@@ -134,13 +134,12 @@ export function createHub() {
   const dec = (s) => decodeURIComponent(s);
 
   // ---------- 公开端点 ----------
+  // healthz 保持轻量：无鉴权端点不暴露用户清单，也不跑 git 子进程（避免被当放大器）
   add('GET', /^\/healthz$/, null, () => ({
     ok: true,
     version: HUB_VERSION,
-    repo: PATHS.repo,
-    branches: repo.listBranches(),
     lastSeq: eventLog.lastSeq,
-    users: loadUsers().map((u) => ({ id: u.id, name: u.name })),
+    uptimeSec: Math.floor((Date.now() - new Date(metrics.startedAt).getTime()) / 1000),
   }));
 
   // 轻量指标端点（Prometheus 文本格式，可直接被抓取）
@@ -182,14 +181,19 @@ export function createHub() {
 
   add('POST', /^\/auth\/login$/, null, ({ body }) => {
     const { userId, token } = body ?? {};
-    const users = loadUsers();
-    const user = users.find((u) => (token ? u.token === token && (!userId || u.id === userId) : u.id === userId));
+    if (!token || !userId) throw new HubError(401, 'UNAUTHORIZED', 'userId / token 均必填');
+    const user = authenticate(userId, token);
     if (!user) throw new HubError(401, 'UNAUTHORIZED', 'userId / token 不匹配');
     return { userId: user.id, name: user.name, token: user.token, scopes: user.scopes };
   });
 
-  // 首次启动引导：面板据此自动填充种子管理员 token，降低上手门槛
-  add('GET', /^\/auth\/bootstrap$/, null, () => getBootstrapInfo());
+  // 首次启动引导：仅允许本机回环访问，防止局域网泄漏种子管理员 token
+  add('GET', /^\/auth\/bootstrap$/, null, ({ req }) => {
+    const ip = req.socket?.remoteAddress ?? '';
+    const isLoopback = ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1';
+    if (!isLoopback) throw forbidden('bootstrap 仅允许本机访问');
+    return getBootstrapInfo();
+  });
 
   // ---------- Agent 自助接入指南（无鉴权：不含任何秘密） ----------
   add('GET', /^\/guide$/, null, ({ req }) => {
@@ -385,7 +389,7 @@ export function createHub() {
   }));
 
   add('DELETE', /^\/tasks\/([^/]+)$/, 'task:write', ({ params, user }) =>
-    tasks.remove(dec(params[0]), user.id),
+    tasks.remove(dec(params[0]), user.id, user.scopes?.includes('admin:write')),
   );
 
   // ---------- 评论（任务评论 + PR 评论）----------
@@ -530,6 +534,7 @@ export function createHub() {
   // ---------- 群聊消息 ----------
   add('POST', /^\/messages$/, 'message:write', ({ body, user }) => {
     if (!body?.text?.trim()) throw badRequest('text 不能为空');
+    if (body.text.length > 10_000) throw badRequest('text 最长 10000 字符');
     const ev = eventLog.append({
       type: 'message.posted',
       authorId: user.id,

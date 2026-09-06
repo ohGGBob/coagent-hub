@@ -31,13 +31,13 @@ import { notFound, forbidden, badRequest } from './errors.js';
 
 /**
  * @param {object} deps
- * @param {string} [deps.file]
  * @param {ReturnType<import('./eventlog.js').createEventLog>} deps.eventLog
  * @param {(taskId: string, delta: number) => void} [deps.onTaskComment] 任务评论计数回调
  */
-export function createCommentStore({ file = PATHS.comments, eventLog, onTaskComment }) {
-  const load = () => readJson(file, {});
-  const save = (s) => writeJson(file, s);
+export function createCommentStore({ eventLog, onTaskComment }) {
+  // 存储路径固定为模块常量，不接受调用方注入
+  const load = () => readJson(PATHS.comments, {});
+  const save = (s) => writeJson(PATHS.comments, s);
 
   function targetKey(type, id) {
     if (!['task', 'review'].includes(type)) throw badRequest(`评论目标类型必须是 task 或 review， got: ${type}`);
@@ -50,6 +50,7 @@ export function createCommentStore({ file = PATHS.comments, eventLog, onTaskComm
    */
   function create({ type, targetId, authorId, body }) {
     if (!body?.trim()) throw badRequest('评论内容不能为空');
+    if (body.length > 10_000) throw badRequest('评论最长 10000 字符');
     const target = targetKey(type, targetId);
     const now = new Date().toISOString();
     /** @type {Comment} */

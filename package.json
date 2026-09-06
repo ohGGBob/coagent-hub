@@ -1,6 +1,6 @@
 {
   "name": "coagent-hub",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "private": true,
   "type": "module",
   "description": "CoAgent Hub — 多 Agent 协同开发中枢（单文件 exe 版）",

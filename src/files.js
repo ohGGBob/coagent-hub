@@ -35,7 +35,10 @@ const MAX_FILE_SIZE = Number(process.env.COAGENT_MAX_FILE_MB ?? 50) * 1024 * 102
 /**
  * @param {{dir?: string, metaFile?: string}} [deps]
  */
-export function createFileStore({ dir = PATHS.files, metaFile = PATHS.fileMeta } = {}) {
+export function createFileStore() {
+  // 存储路径固定为模块常量，不接受调用方注入
+  const dir = PATHS.files;
+  const metaFile = PATHS.fileMeta;
   fs.mkdirSync(dir, { recursive: true });
   if (!fs.existsSync(metaFile)) writeJson(metaFile, {});
 
@@ -55,6 +58,20 @@ export function createFileStore({ dir = PATHS.files, metaFile = PATHS.fileMeta }
   }
 
   /**
+   * 目录内安全路径：解析后必须仍落在 dir 内，否则拒绝。
+   * storedName 虽由 UUID + 白名单扩展名拼成，这里再加一道 containment 保险。
+   * @param {string} name
+   * @returns {string}
+   */
+  function safeJoin(name) {
+    const resolved = path.resolve(dir, String(name));
+    if (resolved !== dir && !resolved.startsWith(dir + path.sep)) {
+      throw badRequest('非法的文件路径');
+    }
+    return resolved;
+  }
+
+  /**
    * 存储一个文件。
    * @param {{buffer: Buffer, filename: string, mimeType?: string, uploadedBy: string}} input
    * @returns {FileMeta}
@@ -67,7 +84,7 @@ export function createFileStore({ dir = PATHS.files, metaFile = PATHS.fileMeta }
     const id = randomUUID();
     const ext = safeExt(filename);
     const storedName = id + ext;
-    const filePath = path.join(dir, storedName);
+    const filePath = safeJoin(storedName);
     fs.writeFileSync(filePath, buffer);
 
     /** @type {FileMeta} */
@@ -86,12 +103,16 @@ export function createFileStore({ dir = PATHS.files, metaFile = PATHS.fileMeta }
     return meta;
   }
 
+  /** 文件 id 格式白名单（UUID）：在进入任何路径运算前先拒绝畸形输入 */
+  const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
   /**
    * 获取文件元数据。
    * @param {string} id
    * @returns {FileMeta}
    */
   function get(id) {
+    if (!UUID_RE.test(String(id))) throw notFound(`文件不存在：${id}`);
     const meta = loadMeta()[id];
     if (!meta) throw notFound(`文件不存在：${id}`);
     return meta;
@@ -104,7 +125,7 @@ export function createFileStore({ dir = PATHS.files, metaFile = PATHS.fileMeta }
    */
   function read(id) {
     const meta = get(id);
-    const data = fs.readFileSync(path.join(dir, meta.storedName));
+    const data = fs.readFileSync(safeJoin(meta.storedName));
     return { meta, data };
   }
 
@@ -128,7 +149,7 @@ export function createFileStore({ dir = PATHS.files, metaFile = PATHS.fileMeta }
       // 只有上传者可删；管理员判断由路由层做
       throw forbidden('只能删除自己上传的文件', { uploadedBy: meta.uploadedBy });
     }
-    fs.rmSync(path.join(dir, meta.storedName), { force: true });
+    fs.rmSync(safeJoin(meta.storedName), { force: true });
     const all = loadMeta();
     delete all[id];
     saveMeta(all);

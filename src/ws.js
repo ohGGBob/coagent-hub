@@ -15,6 +15,10 @@ import { acceptKey, encodeFrame, createFrameParser } from './wire.js';
 const OPCODE = { TEXT: 0x1, CLOSE: 0x8, PING: 0x9, PONG: 0xa };
 const HEARTBEAT_MS = 25_000;
 const DEAD_AFTER_MS = 60_000;
+/** 单帧上限（agent 上行的都是小 JSON，1MB 已远超需要） */
+const MAX_FRAME_SIZE = 1024 * 1024;
+/** agent.status payload 的字节上限（会原样落进事件日志） */
+const MAX_STATUS_PAYLOAD = 8192;
 
 /**
  * 把 WebSocket 总线挂到 HTTP 服务上（处理 Upgrade 请求）。
@@ -26,9 +30,9 @@ const DEAD_AFTER_MS = 60_000;
  *  - `{"type":"agent.status","payload":{}}`  → 落盘为 agent.status 事件并广播
  *
  * @param {import('node:http').Server} server
- * @param {{verify: (header: string|undefined) => {id: string}, eventLog: any}} deps
+ * @param {{verify: (header: string|undefined) => {id: string, scopes: string[]}, requireScope?: (user: any, scope: string) => void, eventLog: any}} deps
  */
-export function attachWebSocket(server, { verify, eventLog }) {
+export function attachWebSocket(server, { verify, requireScope, eventLog }) {
   /** @type {Set<object>} */
   const connections = new Set();
 
@@ -42,6 +46,11 @@ export function attachWebSocket(server, { verify, eventLog }) {
     let user;
     try {
       user = verify(url.searchParams.get('token') ? `Bearer ${url.searchParams.get('token')}` : undefined);
+      if (requireScope) requireScope(user, 'events:read');
+      else if (!user.scopes?.includes('events:read')) {
+        socket.write('HTTP/1.1 403 Forbidden\r\n\r\n');
+        return socket.destroy();
+      }
     } catch {
       socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
       return socket.destroy();
@@ -100,7 +109,12 @@ export function attachWebSocket(server, { verify, eventLog }) {
       if (matches(ev)) sendJson(ev);
     });
 
-    const feed = createFrameParser(({ opcode, payload }) => {
+    const feed = createFrameParser(({ opcode, payload, error }) => {
+      if (error) {
+        // 超长帧：回 CLOSE(1009 Message Too Big) 后断开，防止内存堆积
+        send(OPCODE.CLOSE, 'frame too big');
+        return socket.destroy();
+      }
       conn.alive = Date.now();
       switch (opcode) {
         case OPCODE.TEXT: {
@@ -112,7 +126,12 @@ export function attachWebSocket(server, { verify, eventLog }) {
           }
           if (msg.type === 'ping') return sendJson({ type: 'pong', ts: msg.ts ?? null });
           if (msg.type === 'agent.status') {
-            const ev = eventLog.append({ type: 'agent.status', authorId: user.id, payload: msg.payload ?? {} });
+            // payload 落盘进事件日志，必须限额防止日志被灌爆
+            const payload = msg.payload ?? {};
+            if (JSON.stringify(payload).length > MAX_STATUS_PAYLOAD) {
+              return sendJson({ type: 'error', message: `agent.status payload 过大（上限 ${MAX_STATUS_PAYLOAD} 字节）` });
+            }
+            const ev = eventLog.append({ type: 'agent.status', authorId: user.id, payload });
             return sendJson(ev);
           }
           return sendJson({ type: 'error', message: `未知消息类型：${msg.type}` });

@@ -26,9 +26,10 @@ process.env.COAGENT_DATA = path.join(TMP_ROOT, 'data');
 const STALE_MS = 60 * 60 * 1000;
 try {
   for (const name of fs.readdirSync(os.tmpdir())) {
-    if (!name.startsWith('coagent-smoke-')) continue;
-    const dir = path.join(os.tmpdir(), name);
-    if (dir === TMP_ROOT) continue;
+    // 白名单：目录名只能是「coagent-smoke-」+ 十六进制随机段
+    if (!/^coagent-smoke-[A-Za-z0-9_-]+$/.test(name)) continue;
+    const dir = path.resolve(os.tmpdir(), name);
+    if (dir === TMP_ROOT || !dir.startsWith(os.tmpdir() + path.sep)) continue;
     const st = fs.statSync(dir);
     if (Date.now() - st.mtimeMs > STALE_MS) {
       fs.rmSync(dir, { recursive: true, force: true });
@@ -104,11 +105,18 @@ function g(args, cwd) {
   return (r.stdout || '').trim();
 }
 
+/** 工作目录名白名单：只允许字母数字 _ - */
+const SAFE_NAME = /^[A-Za-z0-9_-]+$/;
+
 /**
  * @param {string} name
  */
 function cloneWork(name) {
-  const dir = path.join(TMP_ROOT, name);
+  if (!SAFE_NAME.test(name)) throw new Error(`非法工作目录名：${name}`);
+  const dir = path.resolve(TMP_ROOT, name);
+  if (dir !== TMP_ROOT && !dir.startsWith(TMP_ROOT + path.sep)) {
+    throw new Error(`工作目录越界：${name}`);
+  }
   g(['clone', '--quiet', PATHS.repo, dir]);
   g(['config', 'user.name', name], dir);
   g(['config', 'user.email', `${name}@coagent.local`], dir);
@@ -154,7 +162,8 @@ try {
   section('1. 服务与鉴权');
   const health = await alice.healthz();
   ok(health.ok === true, 'healthz 返回 ok');
-  ok(health.branches.includes('main'), `裸仓已初始化 main 分支（${health.branches.join(', ')}）`);
+  ok(health.users === undefined, 'healthz 不再暴露用户清单（瘦身）');
+  ok((await alice.branch.list()).branches.includes('main'), '裸仓已初始化 main 分支');
   ok((await alice.me()).userId === 'alice', '/me 识别 alice 身份');
   await rejects(() => new HubClient({ hubUrl, token: 'tok_nope' }).me(), 401, '无效 token 被拒');
 
@@ -434,13 +443,41 @@ try {
     '接入卡片里的 token 真实可用',
   );
 
-  // ------------------------------------------------------------ 12. 收尾一致性
-  section('12. 一致性');
+  // ------------------------------------------------------------ 12. 输入校验与加固回归
+  section('12. 输入校验与加固回归');
+  {
+    // tags 传非数组：必须 400，且不能在任务表里留下会让 /search 崩的脏数据
+    await rejects(() => alice.task.create({ title: '毒任务', tags: 'not-an-array' }), 400, 'tags 传字符串被拒（400）');
+    await rejects(() => alice.task.create({ title: '毒任务', labels: { a: 1 } }), 400, 'labels 传对象被拒（400）');
+    const sr = await alice.search('anything');
+    ok(Array.isArray(sr.tasks) && Array.isArray(sr.context), '搜索端点不再被脏数据毒化（200）');
+
+    // PATCH 状态一致性：assignee 禁改；claimed/open 走专用接口
+    const { task: vt } = await alice.task.create({ title: '校验用任务', tags: ['hardening'] });
+    await rejects(() => alice.task.update(vt.id, { status: 'claimed', assignee: 'alice' }), 400, 'PATCH 携带 assignee 被拒');
+    await rejects(() => alice.task.update(vt.id, { status: 'banana' }), 400, 'PATCH 非法 status 被拒');
+    await rejects(() => alice.task.update(vt.id, { status: 'claimed' }), 400, 'PATCH 直改 claimed 被拒（请走 claim）');
+    await rejects(() => alice.task.update(vt.id, { title: '   ' }), 400, 'PATCH 空 title 被拒');
+    await alice.task.update(vt.id, { status: 'done' });
+    await alice.task.update(vt.id, { status: 'open' });
+    ok((await alice.task.get(vt.id)).task.assignee === null, 'PATCH open 归位后 assignee 一并清空');
+    await bob.task.claim(vt.id);
+    await rejects(() => alice.task.update(vt.id, { status: 'open' }), 403, 'PATCH open 释放他人任务被拒（走 release+审核）');
+
+    // 长度上限
+    await rejects(() => alice.task.create({ title: 'x'.repeat(301) }), 400, '超长 title 被拒');
+    await rejects(() => alice.context.append({ title: 't', body: 'x'.repeat(100_001) }), 400, '超长 context body 被拒');
+    await rejects(() => alice.request('POST', '/messages', { body: { text: 'x'.repeat(10_001) } }), 400, '超长消息被拒');
+    await rejects(() => bob.task.addComment(vt.id, 'x'.repeat(10_001)), 400, '超长评论被拒');
+  }
+
+  // ------------------------------------------------------------ 13. 收尾一致性
+  section('13. 一致性');
   const finalEvents = await alice.replay();
   ok(finalEvents.events[finalEvents.events.length - 1].seq === finalEvents.lastSeq, '回放末条 seq == lastSeq');
   ok(alice.lastSeq === 0, 'alice 游标未被意外修改（回放不推进游标）');
-  const finalHealth = await alice.healthz();
-  ok(finalHealth.branches.includes('dev/alice') && finalHealth.branches.includes('dev/bob'), '分支全景完整');
+  const finalBranches = (await alice.branch.list()).branches;
+  ok(finalBranches.includes('dev/alice') && finalBranches.includes('dev/bob'), '分支全景完整');
 } finally {
   server.close();
   // close() 只停止接受新连接，keep-alive 长连接会让进程滞留到超时；

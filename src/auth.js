@@ -8,7 +8,7 @@
  */
 
 import fs from 'node:fs';
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { PATHS } from './config.js';
 import { readJson, writeJson } from './jsonfile.js';
 import { unauthorized, forbidden, conflict, notFound, badRequest } from './errors.js';
@@ -95,6 +95,18 @@ export function getBootstrapInfo() {
 }
 
 /**
+ * 常量时间比较两个 token：先哈希成定长摘要再比较，
+ * 避免逐字节比较的时序差泄露前缀匹配长度。
+ * @param {string} a
+ * @param {string} b
+ */
+function tokensMatch(a, b) {
+  const ha = createHash('sha256').update(String(a)).digest();
+  const hb = createHash('sha256').update(String(b)).digest();
+  return timingSafeEqual(ha, hb);
+}
+
+/**
  * 从 Authorization: Bearer <token> 解析并校验用户。
  * @param {string|undefined} header
  * @returns {User}
@@ -102,9 +114,21 @@ export function getBootstrapInfo() {
 export function verify(header) {
   const token = (header ?? '').replace(/^Bearer\s+/i, '').trim();
   if (!token) throw unauthorized('缺少 Authorization: Bearer <token>');
-  const user = loadUsers().find((u) => u.token === token);
+  const user = loadUsers().find((u) => tokensMatch(u.token, token));
   if (!user) throw unauthorized('token 无效');
   return user;
+}
+
+/**
+ * 登录校验：userId + token 双匹配才算成功。
+ * @param {string} userId
+ * @param {string} token
+ * @returns {User|null}
+ */
+export function authenticate(userId, token) {
+  if (!userId || !token) return null;
+  const users = loadUsers();
+  return users.find((u) => u.id === userId && tokensMatch(u.token, token)) ?? null;
 }
 
 /**

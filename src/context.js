@@ -16,6 +16,11 @@ import { PATHS } from './config.js';
 import { forbidden, notFound, badRequest } from './errors.js';
 
 const VALID_TYPES = new Set(['decision', 'progress', 'blocker', 'note', 'summary']);
+/** 字段长度上限（正文会进 BM25 与事件日志，防止超大字段拖垮检索/灌爆日志） */
+const MAX_TITLE = 300;
+const MAX_BODY = 100_000;
+const MAX_TAGS = 20;
+const MAX_TAG_LEN = 64;
 
 /**
  * 极简零依赖分词：按非字母数字切西文词；CJK 连续串切成单字 + 相邻二元组
@@ -109,7 +114,9 @@ function bm25(entries, q) {
 /**
  * @param {{file?: string, eventLog: import('./eventlog.js').createEventLog extends (...a:any)=>infer R ? R : any}} deps
  */
-export function createContextStore({ file = PATHS.context, eventLog }) {
+export function createContextStore({ eventLog }) {
+  // 存储路径固定为模块常量，不接受调用方注入
+  const file = PATHS.context;
   fs.mkdirSync(path.dirname(file), { recursive: true });
   if (!fs.existsSync(file)) fs.writeFileSync(file, '');
 
@@ -146,6 +153,14 @@ export function createContextStore({ file = PATHS.context, eventLog }) {
       throw badRequest(`type 必须是 ${[...VALID_TYPES].join(' | ')}`, { got: type });
     }
     if (!input.title || !input.title.trim()) throw badRequest('title 不能为空');
+    if (input.title.length > MAX_TITLE) throw badRequest(`title 最长 ${MAX_TITLE} 字符`);
+    if (input.body && input.body.length > MAX_BODY) throw badRequest(`body 最长 ${MAX_BODY} 字符`);
+    if (input.tags !== undefined && !Array.isArray(input.tags)) throw badRequest('tags 必须是字符串数组');
+    const tags = (input.tags ?? []).map((t) => String(t).trim()).filter(Boolean);
+    if (tags.length > MAX_TAGS) throw badRequest(`tags 最多 ${MAX_TAGS} 个`);
+    for (const t of tags) {
+      if (t.length > MAX_TAG_LEN) throw badRequest(`tags 单项最长 ${MAX_TAG_LEN} 字符`);
+    }
 
     /** @type {ContextEntry} */
     const entry = {
@@ -154,7 +169,7 @@ export function createContextStore({ file = PATHS.context, eventLog }) {
       type,
       title: input.title.trim(),
       body: input.body ?? '',
-      tags: input.tags ?? [],
+      tags,
       attachments: input.attachments ?? [],
       metadata: input.metadata ?? {},
       source: input.source ?? 'manual',
@@ -296,6 +311,8 @@ export function createContextStore({ file = PATHS.context, eventLog }) {
       throw forbidden('只能修订自己发布的上下文', { owner: target.authorId });
     }
     if (!patch.body && !patch.title) throw badRequest('修订内容不能为空');
+    if (patch.title !== undefined && (String(patch.title).length > MAX_TITLE)) throw badRequest(`title 最长 ${MAX_TITLE} 字符`);
+    if (patch.body !== undefined && patch.body !== null && patch.body.length > MAX_BODY) throw badRequest(`body 最长 ${MAX_BODY} 字符`);
     const marker = {
       kind: 'revision',
       id: randomUUID(),

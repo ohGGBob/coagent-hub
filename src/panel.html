@@ -576,8 +576,15 @@ function renderMarkdown(text) {
   // 粗体和斜体
   html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
   html = html.replace(/\*(.+?)\*/g, '<em>$1</em>');
-  // 链接
-  html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank">$1</a>');
+  // 链接：只放行安全协议（http/https/mailto/站内相对路径），
+  // 拦截 javascript: 等伪协议——正文先经过 esc()，这里无法逃出属性，但协议本身会原样进 href
+  html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (m, txt, href) => {
+    const h = href.trim();
+    if (/^(https?:\/\/|mailto:|\/|\.\/|#)/i.test(h)) {
+      return `<a href="${h}" target="_blank" rel="noopener noreferrer">${txt}</a>`;
+    }
+    return m; // 非白名单协议：保持原样（已转义），渲染为普通文本
+  });
   // 引用
   html = html.replace(/^&gt; (.+)$/gm, '<blockquote>$1</blockquote>');
   // 分割线
@@ -937,11 +944,14 @@ function dropTask(e, status) {
   e.preventDefault();
   e.currentTarget.classList.remove('drag-over');
   if (!DRAG_TASK_ID) return;
-  const patch = { status };
-  if (status === 'claimed') patch.assignee = ME.userId;
-  if (status === 'open') patch.assignee = null;
-  api('PATCH', `/tasks/${DRAG_TASK_ID}`, patch).then(() => { toast('任务已移动', 'ok'); DRAG_TASK_ID = null; refreshAll(); })
-    .catch((err) => { toast('✗ ' + err.message, 'err'); DRAG_TASK_ID = null; });
+  const id = DRAG_TASK_ID;
+  DRAG_TASK_ID = null;
+  // 认领 / 释放走专用接口（服务端 PATCH 已禁止携带 assignee），done 等纯状态走 PATCH
+  const req = status === 'claimed' ? api('POST', `/tasks/${id}/claim`)
+    : status === 'open' ? api('POST', `/tasks/${id}/release`, {})
+    : api('PATCH', `/tasks/${id}`, { status });
+  req.then(() => { toast('任务已移动', 'ok'); refreshAll(); })
+    .catch((err) => { toast('✗ ' + err.message, 'err'); });
 }
 function createTask() {
   const title = $('tk-title').value.trim();
@@ -1050,7 +1060,6 @@ async function postTaskComment(taskId) {
 /* ============================================================
    共享上下文
    ============================================================ */
-let CTX_Q = '', CTX_TYPE = '';
 function renderContext() {
   let entries = CACHE.context;
   if (CTX_TYPE) entries = entries.filter((e) => e.type === CTX_TYPE);

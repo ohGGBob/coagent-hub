@@ -103,10 +103,23 @@ export function branchExists(name) {
 }
 
 /**
- * 断言分支存在。
+ * 分支名格式校验：只允许字母数字 / . _ -，且不允许以 '-' 开头（防被当成 git 选项）。
+ * 所有「名字来自 HTTP 请求」的分支读写都应先过这道闸。
+ * @param {string} name
+ */
+export function validateBranchName(name) {
+  if (!/^[A-Za-z0-9][A-Za-z0-9._/-]*$/.test(name) || name.includes('..')) {
+    throw badRequest('分支名含非法字符', { branch: name });
+  }
+  return name;
+}
+
+/**
+ * 断言分支存在（含名字格式校验）。
  * @param {string} name
  */
 export function requireBranch(name) {
+  validateBranchName(name);
   if (!branchExists(name)) throw notFound(`分支不存在：${name}`, { branches: listBranches() });
   return name;
 }
@@ -129,7 +142,7 @@ export function canPush(userId, branch) {
  * @returns {{branch: string, sha: string}}
  */
 export function createBranch(name, start = 'main') {
-  if (!/^[A-Za-z0-9._\-\/]+$/.test(name)) throw badRequest('分支名含非法字符', { branch: name });
+  validateBranchName(name);
   if (branchExists(name)) throw conflict(`分支已存在：${name}`);
   requireBranch(start);
   R('branch', name, start);

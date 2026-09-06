@@ -15,6 +15,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { PATHS } from './config.js';
 
 /**
  * @typedef {object} Event
@@ -35,10 +36,11 @@ import { randomUUID } from 'node:crypto';
  */
 
 /**
- * 创建事件日志实例。
- * @param {string} file JSONL 路径
+ * 创建事件日志实例。日志路径固定为模块常量 PATHS.events，
+ * 不接受调用方注入（避免任何动态输入到达文件路径）。
  */
-export function createEventLog(file) {
+export function createEventLog() {
+  const file = PATHS.events;
   fs.mkdirSync(path.dirname(file), { recursive: true });
   if (!fs.existsSync(file)) fs.writeFileSync(file, '');
 

@@ -19,6 +19,31 @@ import { notFound, conflict, forbidden, badRequest } from './errors.js';
 
 const VALID_PRIORITIES = new Set(['urgent', 'high', 'medium', 'low']);
 const PRIORITY_WEIGHT = { urgent: 0, high: 1, medium: 2, low: 3 };
+const VALID_STATUSES = new Set(['open', 'claimed', 'done']);
+/** title / description 的长度上限（防止超大字段写穿数据文件） */
+const MAX_TITLE = 300;
+const MAX_DESCRIPTION = 100_000;
+const MAX_LIST_ITEMS = 20;
+const MAX_LIST_ITEM_LEN = 64;
+
+/**
+ * 校验并清洗 tags / labels 这类字符串数组字段。
+ * 非数组直接拒绝——历史上放过字符串导致 (tags||[]).join 在搜索路径抛 TypeError，
+ * 一条脏数据就能让 /search 对所有人 500。
+ * @param {*} v
+ * @param {string} field
+ * @returns {string[]|undefined} undefined 表示未提供
+ */
+function cleanStringArray(v, field) {
+  if (v === undefined || v === null) return undefined;
+  if (!Array.isArray(v)) throw badRequest(`${field} 必须是字符串数组`);
+  const arr = v.map((x) => String(x).trim()).filter(Boolean);
+  if (arr.length > MAX_LIST_ITEMS) throw badRequest(`${field} 最多 ${MAX_LIST_ITEMS} 项`);
+  for (const s of arr) {
+    if (s.length > MAX_LIST_ITEM_LEN) throw badRequest(`${field} 单项最长 ${MAX_LIST_ITEM_LEN} 字符`);
+  }
+  return arr;
+}
 
 /**
  * @typedef {object} Task
@@ -40,23 +65,23 @@ const PRIORITY_WEIGHT = { urgent: 0, high: 1, medium: 2, low: 3 };
 
 /**
  * @param {object} deps
- * @param {string} [deps.file]
  * @param {ReturnType<import('./eventlog.js').createEventLog>} deps.eventLog
  * @param {(reviewId: string) => any} [deps.getReview] 释放他人任务时校验审核用
  */
-export function createTaskStore({ file = PATHS.tasks, eventLog, getReview }) {
+export function createTaskStore({ eventLog, getReview }) {
+  // 存储路径固定为模块常量，不接受调用方注入（避免任何动态输入到达文件路径）
   /** @returns {Record<string, Task>} */
-  const load = () => readJson(file, {});
+  const load = () => readJson(PATHS.tasks, {});
   /** @param {Record<string, Task>} state */
-  const save = (state) => writeJson(file, state);
+  const save = (state) => writeJson(PATHS.tasks, state);
 
-  /** 兼容旧数据：补全新字段 */
+  /** 兼容旧数据：补全新字段，矫正历史脏数据（如 tags 被存成字符串） */
   function normalize(t) {
     if (!t.priority) t.priority = 'medium';
-    if (!t.labels) t.labels = [];
+    if (!Array.isArray(t.labels)) t.labels = t.labels ? [String(t.labels)] : [];
+    if (!Array.isArray(t.tags)) t.tags = t.tags ? [String(t.tags)] : [];
     if (t.dueDate === undefined) t.dueDate = null;
-    if (t.commentCount === undefined) t.commentCount = 0;
-    if (!t.tags) t.tags = [];
+    if (!Number.isFinite(t.commentCount)) t.commentCount = 0;
     return t;
   }
 
@@ -103,9 +128,15 @@ export function createTaskStore({ file = PATHS.tasks, eventLog, getReview }) {
    */
   function create(input) {
     if (!input.title?.trim()) throw badRequest('任务 title 不能为空');
+    if (input.title.length > MAX_TITLE) throw badRequest(`title 最长 ${MAX_TITLE} 字符`);
+    if (input.description && input.description.length > MAX_DESCRIPTION) {
+      throw badRequest(`description 最长 ${MAX_DESCRIPTION} 字符`);
+    }
     const priority = input.priority ?? 'medium';
     if (!VALID_PRIORITIES.has(priority)) throw badRequest(`priority 必须是 ${[...VALID_PRIORITIES].join(' | ')}`);
     if (input.dueDate && isNaN(Date.parse(input.dueDate))) throw badRequest('dueDate 必须是有效的 ISO 日期');
+    const tags = cleanStringArray(input.tags, 'tags') ?? [];
+    const labels = cleanStringArray(input.labels, 'labels') ?? [];
 
     const now = new Date().toISOString();
     /** @type {Task} */
@@ -119,9 +150,9 @@ export function createTaskStore({ file = PATHS.tasks, eventLog, getReview }) {
       createdAt: now,
       updatedAt: now,
       branchId: input.branchId,
-      tags: input.tags ?? [],
+      tags,
       priority,
-      labels: input.labels ?? [],
+      labels,
       dueDate: input.dueDate ?? null,
       commentCount: 0,
     };
@@ -177,17 +208,42 @@ export function createTaskStore({ file = PATHS.tasks, eventLog, getReview }) {
     if (task.assignee !== userId && task.createdBy !== userId) {
       throw forbidden('只有任务持有者或创建者可更新任务', { owner: task.assignee, createdBy: task.createdBy });
     }
+    if (patch == null || typeof patch !== 'object') throw badRequest('更新体必须为对象');
+    if ('assignee' in patch) {
+      throw badRequest('assignee 不能经 PATCH 修改，请走 claim / release 接口');
+    }
     if (patch.priority && !VALID_PRIORITIES.has(patch.priority)) {
       throw badRequest(`priority 必须是 ${[...VALID_PRIORITIES].join(' | ')}`);
+    }
+    if (patch.status !== undefined && !VALID_STATUSES.has(patch.status)) {
+      throw badRequest(`status 必须是 ${[...VALID_STATUSES].join(' | ')}`);
     }
     if (patch.dueDate !== undefined && patch.dueDate !== null && isNaN(Date.parse(patch.dueDate))) {
       throw badRequest('dueDate 必须是有效的 ISO 日期');
     }
-    for (const key of ['title', 'description', 'status', 'tags', 'branchId', 'priority', 'labels', 'dueDate', 'assignee']) {
+    if (patch.title !== undefined) {
+      if (!String(patch.title).trim()) throw badRequest('任务 title 不能为空');
+      if (String(patch.title).length > MAX_TITLE) throw badRequest(`title 最长 ${MAX_TITLE} 字符`);
+    }
+    if (patch.description !== undefined && patch.description !== null && patch.description.length > MAX_DESCRIPTION) {
+      throw badRequest(`description 最长 ${MAX_DESCRIPTION} 字符`);
+    }
+    const tags = cleanStringArray(patch.tags, 'tags');
+    const labels = cleanStringArray(patch.labels, 'labels');
+    // 状态一致性：认领 / 释放各有专用接口且带归属校验，PATCH 里改出这两种状态会绕过它们
+    if (patch.status === 'claimed' && task.assignee !== userId) {
+      throw badRequest('status=claimed 请走 claim 接口认领任务', { hint: 'POST /tasks/:id/claim' });
+    }
+    if (patch.status === 'open' && task.assignee && task.assignee !== userId) {
+      throw forbidden('释放他人认领的任务需走 release 接口（须出示 approved 审核）', { hint: 'POST /tasks/:id/release' });
+    }
+    for (const key of ['title', 'description', 'status', 'branchId', 'priority', 'dueDate']) {
       if (patch[key] !== undefined) task[key] = patch[key];
     }
-    // 显式设置 assignee 为 null 时同时重置状态
-    if (patch.assignee === null) task.status = 'open';
+    if (tags !== undefined) task.tags = tags;
+    if (labels !== undefined) task.labels = labels;
+    // 归位 open 的同时清空认领人，避免出现「open 但仍被持有」的矛盾状态
+    if (patch.status === 'open') task.assignee = null;
     task.updatedAt = new Date().toISOString();
     save(state);
     eventLog.append({
@@ -248,15 +304,19 @@ export function createTaskStore({ file = PATHS.tasks, eventLog, getReview }) {
   }
 
   /**
-   * 删除任务。创建者或管理员可删（管理员判断由路由层做，这里只校验存在性）。
+   * 删除任务。仅创建者或管理员可删（isAdmin 由路由层按 admin:write 传入）。
    * @param {string} id
    * @param {string} userId
+   * @param {boolean} [isAdmin=false]
    * @returns {{id: string, removed: boolean}}
    */
-  function remove(id, userId) {
+  function remove(id, userId, isAdmin = false) {
     const state = load();
     const task = state[id];
     if (!task) throw notFound(`任务不存在：${id}`);
+    if (task.createdBy !== userId && !isAdmin) {
+      throw forbidden('只有任务创建者或管理员可删除任务', { createdBy: task.createdBy });
+    }
     delete state[id];
     save(state);
     eventLog.append({
