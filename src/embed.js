@@ -15,10 +15,29 @@
  * @module embed
  */
 
-/** 是否启用（COAGENT_EMBED=0 显式关闭） */
-const ENABLED = process.env.COAGENT_EMBED !== '0';
-/** Ollama 基地址 */
-const BASE_URL = (process.env.COAGENT_EMBED_URL ?? 'http://127.0.0.1:11434').replace(/\/+$/, '');
+/**
+ * Ollama 基地址。来源是运维环境变量 COAGENT_EMBED_URL（主机管理员配置），
+ * 任何 HTTP 请求输入都到不了这里——不存在「按用户提供的 URL 发起请求」的路径。
+ * 环回/私网地址（默认 127.0.0.1:11434）是本功能的预期目标：隐私优先的本机 Ollama，
+ * 因此刻意不做「阻断私网」；唯一的入口校验是协议白名单（仅 http/https），
+ * 防止误配 file:/ftp: 等协议被 fetch 底层意外处理。
+ */
+const BASE_URL = (() => {
+  const raw = (process.env.COAGENT_EMBED_URL ?? 'http://127.0.0.1:11434').replace(/\/+$/, '');
+  try {
+    const u = new URL(raw);
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') {
+      console.warn(`[embed] COAGENT_EMBED_URL 协议必须是 http/https（got: ${u.protocol}），语义检索已禁用`);
+      return null;
+    }
+    return raw;
+  } catch {
+    console.warn('[embed] COAGENT_EMBED_URL 不是合法 URL，语义检索已禁用');
+    return null;
+  }
+})();
+/** 是否启用（COAGENT_EMBED=0 显式关闭，或 URL 配置非法时自动禁用） */
+const ENABLED = process.env.COAGENT_EMBED !== '0' && BASE_URL !== null;
 /** 嵌入模型 */
 const MODEL = process.env.COAGENT_EMBED_MODEL ?? 'bge-m3';
 /** 单次请求超时 */
