@@ -54,7 +54,7 @@ fs.writeFileSync(
       disableExperimentalSEAWarning: true,
       useSnapshot: false,
       useCodeCache: true,
-      assets: { 'panel.html': 'src/panel.html' },
+      assets: { 'panel.html': 'src/panel.html', 'icon.ico': 'dist/icon.ico' },
     },
     null,
     2,
@@ -77,6 +77,20 @@ await postject.inject(exe, 'NODE_SEA_BLOB', fs.readFileSync(path.join(DIST, 'sea
 const sizeMB = (fs.statSync(exe).size / 1024 / 1024).toFixed(1);
 console.log(`[4/4] 资源注入完成 → dist/coagent-win-x64.exe（${sizeMB} MB）`);
 
+// 可选：嵌入 exe 图标（用本地 rcedit 二进制同步调用；不存在则跳过——
+// 快捷方式图标由「释放 icon.ico + IconLocation」兜底，不依赖本步骤）
+try {
+  const rceditBin = path.join(ROOT, 'node_modules', 'rcedit', 'bin', process.arch === 'x64' ? 'rcedit-x64.exe' : 'rcedit.exe');
+  if (process.platform === 'win32' && fs.existsSync(rceditBin)) {
+    execFileSync(rceditBin, [exe, '--set-icon', path.join(DIST, 'icon.ico')], { stdio: 'pipe', timeout: 30_000 });
+    console.log('[+] exe 图标已嵌入（rcedit）');
+  } else {
+    console.log('[!] 跳过 exe 图标嵌入（非 Windows 或 rcedit 未安装）；桌面快捷方式仍会显示应用图标');
+  }
+} catch (err) {
+  console.warn(`[!] exe 图标未嵌入（${String(err?.message ?? err).slice(0, 60)}）；桌面快捷方式仍会显示应用图标`);
+}
+
 /* ============================================================
    macOS 版：--target=mac-arm64 / mac-x64（可叠加，--target=win,mac-arm64）
    下载对应版本的 darwin node 宿主 → 注入同一份 blob → 组装 CoAgent.app → zip。
@@ -96,6 +110,7 @@ const INFO_PLIST = (version) => `<?xml version="1.0" encoding="UTF-8"?>
   <key>CFBundleVersion</key><string>${version}</string>
   <key>CFBundleShortVersionString</key><string>${version}</string>
   <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleIconFile</key><string>coagent</string>
   <key>NSHighResolutionCapable</key><true/>
   <key>LSMinimumSystemVersion</key><string>10.15</string>
 </dict></plist>`;
@@ -149,6 +164,8 @@ for (const arch of macArchs) {
   fs.rmSync(appDir, { recursive: true, force: true });
   fs.mkdirSync(macosDir, { recursive: true });
   fs.writeFileSync(path.join(appDir, 'Contents', 'Info.plist'), INFO_PLIST(PKG.version));
+  fs.mkdirSync(path.join(appDir, 'Contents', 'Resources'), { recursive: true });
+  fs.copyFileSync(path.join(DIST, 'icon.icns'), path.join(appDir, 'Contents', 'Resources', 'coagent.icns'));
   fs.writeFileSync(path.join(DIST, '首次使用说明.txt'), MAC_README(a));
 
   const macBin = path.join(macosDir, 'CoAgent');

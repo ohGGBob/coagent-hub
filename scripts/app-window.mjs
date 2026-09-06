@@ -55,10 +55,10 @@ export function openAppWindow(url, { width = 1280, height = 860 } = {}) {
 /**
  * 创建桌面快捷方式（Windows，经 PowerShell WScript.Shell COM）。
  * 失败静默——快捷方式是便利项，不是功能前提。
- * @param {{name: string, target: string, args?: string, workingDir?: string}} opts
+ * @param {{name: string, target: string, args?: string, workingDir?: string, icon?: string}} opts
  * @returns {boolean} 是否创建成功（已存在视为成功）
  */
-export function createDesktopShortcut({ name, target, args = '', workingDir = '' }) {
+export function createDesktopShortcut({ name, target, args = '', workingDir = '', icon = '' }) {
   if (process.platform !== 'win32') return false;
   try {
     const desktop = path.join(process.env.USERPROFILE ?? '', 'Desktop');
@@ -69,11 +69,31 @@ export function createDesktopShortcut({ name, target, args = '', workingDir = ''
       `$s.TargetPath = '${target}';` +
       (args ? `$s.Arguments = '${args.replace(/'/g, "''")}';` : '') +
       (workingDir ? `$s.WorkingDirectory = '${workingDir}';` : '') +
+      (icon ? `$s.IconLocation = '${icon},0';` : '') +
       '$s.Save()';
     const r = cp.spawnSync('powershell', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', ps], { encoding: 'utf8', timeout: 15_000 });
     return r.status === 0 && fs.existsSync(lnk);
   } catch {
     return false;
+  }
+}
+
+/**
+ * 把 SEA 内嵌的 icon.ico 释放到 exe 同目录（桌面快捷方式的图标来源）。
+ * 非 SEA 环境或已存在时不做任何事。
+ * @returns {string} ico 文件路径（失败返回空串）
+ */
+export function extractAppIcon() {
+  if (process.platform !== 'win32' || process.env.COAGENT_ENTRY !== 'sea') return '';
+  try {
+    const sea = process.getBuiltinModule?.('node:sea');
+    if (!sea?.getRawAsset) return '';
+    const out = path.join(path.dirname(process.execPath), 'coagent.ico');
+    if (fs.existsSync(out)) return out;
+    fs.writeFileSync(out, Buffer.from(sea.getRawAsset('icon.ico')));
+    return out;
+  } catch {
+    return '';
   }
 }
 

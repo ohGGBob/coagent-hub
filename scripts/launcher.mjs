@@ -70,23 +70,24 @@ function homePage(version, state) {
 
   return `<!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8">
+<link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%20512%20512%22%3E%3Cdefs%3E%3ClinearGradient%20id%3D%22g%22%20x1%3D%220%22%20y1%3D%220%22%20x2%3D%220%22%20y2%3D%221%22%3E%3Cstop%20offset%3D%220%22%20stop-color%3D%22%232bd86a%22%2F%3E%3Cstop%20offset%3D%221%22%20stop-color%3D%22%23059f4c%22%2F%3E%3C%2FlinearGradient%3E%3C%2Fdefs%3E%3Crect%20width%3D%22512%22%20height%3D%22512%22%20rx%3D%22118%22%20fill%3D%22url(%23g)%22%2F%3E%3Cpath%20d%3D%22M96%20164%20a52%2052%200%200%201%2052%20-52%20h216%20a52%2052%200%200%201%2052%2052%20v140%20a52%2052%200%200%201%20-52%2052%20h-166%20l-68%2074%2020%20-74%20h-2%20a52%2052%200%200%201%20-52%20-52%20z%22%20fill%3D%22%23fff%22%2F%3E%3Cpath%20d%3D%22M186%20316%20L198%20208%20L250%20262%20L276%20198%20L302%20262%20L354%20208%20L366%20316%20Z%22%20fill%3D%22%2307c160%22%2F%3E%3Crect%20x%3D%22186%22%20y%3D%22316%22%20width%3D%22180%22%20height%3D%2224%22%20rx%3D%228%22%20fill%3D%22%2307c160%22%2F%3E%3C%2Fsvg%3E">
 <title>CoAgent Hub · 主页</title>
 <style>
   * { box-sizing: border-box; margin: 0; }
-  body { font-family: "Segoe UI", "Microsoft YaHei", sans-serif; background: #0d1117; color: #e6edf3;
+  body { font-family: "Segoe UI", "Microsoft YaHei", sans-serif; background: #ededed; color: #191919;
          min-height: 100vh; display: flex; align-items: center; justify-content: center; }
   .wrap { width: 560px; max-width: 92vw; }
   .logo { text-align: center; font-size: 40px; margin-bottom: 6px; }
   h1 { text-align: center; font-size: 20px; }
-  .sub { text-align: center; color: #8b949e; font-size: 13px; margin: 6px 0 22px; }
-  .card { background: #161b22; border: 1px solid #30363d; border-radius: 14px; padding: 18px 20px; margin-bottom: 14px; }
+  .sub { text-align: center; color: #6b6f76; font-size: 13px; margin: 6px 0 22px; }
+  .card { background: #fff; border: 1px solid #e5e6eb; border-radius: 14px; padding: 18px 20px; margin-bottom: 14px; }
   .card h2 { font-size: 15px; margin-bottom: 4px; }
-  .card p { color: #8b949e; font-size: 12px; margin-bottom: 12px; line-height: 1.6; }
+  .card p { color: #6b6f76; font-size: 12px; margin-bottom: 12px; line-height: 1.6; }
   button { background: #238636; border: 0; color: #fff; font-size: 14px; font-weight: 600;
            padding: 9px 18px; border-radius: 8px; cursor: pointer; width: 100%; }
   button.ghost { background: transparent; border: 1px solid #30363d; }
   button:hover { filter: brightness(1.15); }
-  input { width: 100%; background: #0d1117; border: 1px solid #30363d; color: #e6edf3;
+  input { width: 100%; background: #f5f6f7; border: 1px solid #d9dbde; color: #191919;
           border-radius: 8px; padding: 9px 12px; font-size: 13px; margin-bottom: 10px; }
   input:focus { outline: 1px solid #238636; }
   .msg { font-size: 12px; margin-top: 10px; min-height: 16px; }
@@ -158,22 +159,23 @@ function tutorialPage(version) {
     `<div class="step"><div class="num">${n}</div><div><div class="st">${title}</div><div class="sb">${body}</div></div></div>`;
   return `<!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8">
+<link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%20512%20512%22%3E%3Cdefs%3E%3ClinearGradient%20id%3D%22g%22%20x1%3D%220%22%20y1%3D%220%22%20x2%3D%220%22%20y2%3D%221%22%3E%3Cstop%20offset%3D%220%22%20stop-color%3D%22%232bd86a%22%2F%3E%3Cstop%20offset%3D%221%22%20stop-color%3D%22%23059f4c%22%2F%3E%3C%2FlinearGradient%3E%3C%2Fdefs%3E%3Crect%20width%3D%22512%22%20height%3D%22512%22%20rx%3D%22118%22%20fill%3D%22url(%23g)%22%2F%3E%3Cpath%20d%3D%22M96%20164%20a52%2052%200%200%201%2052%20-52%20h216%20a52%2052%200%200%201%2052%2052%20v140%20a52%2052%200%200%201%20-52%2052%20h-166%20l-68%2074%2020%20-74%20h-2%20a52%2052%200%200%201%20-52%20-52%20z%22%20fill%3D%22%23fff%22%2F%3E%3Cpath%20d%3D%22M186%20316%20L198%20208%20L250%20262%20L276%20198%20L302%20262%20L354%20208%20L366%20316%20Z%22%20fill%3D%22%2307c160%22%2F%3E%3Crect%20x%3D%22186%22%20y%3D%22316%22%20width%3D%22180%22%20height%3D%2224%22%20rx%3D%228%22%20fill%3D%22%2307c160%22%2F%3E%3C%2Fsvg%3E">
 <title>CoAgent Hub · 协作教程</title>
 <style>
   * { box-sizing: border-box; margin: 0; }
-  body { font-family: "Segoe UI", "Microsoft YaHei", sans-serif; background: #0d1117; color: #e6edf3; padding: 28px 0 60px; }
+  body { font-family: "Segoe UI", "Microsoft YaHei", sans-serif; background: #ededed; color: #191919; padding: 28px 0 60px; }
   .wrap { width: 680px; max-width: 92vw; margin: 0 auto; }
   h1 { font-size: 20px; text-align: center; }
-  .sub { text-align: center; color: #8b949e; font-size: 13px; margin: 6px 0 24px; }
+  .sub { text-align: center; color: #6b6f76; font-size: 13px; margin: 6px 0 24px; }
   h2 { font-size: 15px; color: #58a6ff; margin: 26px 0 10px; border-bottom: 1px solid #21262d; padding-bottom: 6px; }
-  .card { background: #161b22; border: 1px solid #30363d; border-radius: 12px; padding: 14px 18px; margin-bottom: 12px; }
+  .card { background: #fff; border: 1px solid #e5e6eb; border-radius: 12px; padding: 14px 18px; margin-bottom: 12px; }
   .step { display: flex; gap: 12px; margin: 10px 0; }
   .num { width: 24px; height: 24px; border-radius: 50%; background: #238636; color: #fff; display: flex;
          align-items: center; justify-content: center; font-weight: 700; font-size: 12px; flex-shrink: 0; }
   .st { font-size: 13px; font-weight: 600; }
-  .sb { font-size: 12px; color: #8b949e; line-height: 1.7; margin-top: 2px; }
+  .sb { font-size: 12px; color: #6b6f76; line-height: 1.7; margin-top: 2px; }
   .sb code { background: #0d1117; border: 1px solid #30363d; border-radius: 4px; padding: 1px 5px; font-size: 11px; }
-  ul { padding-left: 18px; font-size: 12px; color: #8b949e; line-height: 1.9; }
+  ul { padding-left: 18px; font-size: 12px; color: #6b6f76; line-height: 1.9; }
   .ver { text-align: center; color: #484f58; font-size: 11px; margin-top: 24px; }
 </style></head><body>
 <div class="wrap">
@@ -289,6 +291,7 @@ export async function runLauncher(opts) {
         createDesktopShortcut({
           name: 'CoAgent Hub',
           target: process.execPath,
+          icon: extractAppIcon(),
           args: `app --hub ${hub} --token ${token}`,
           workingDir: path.dirname(process.execPath),
         });

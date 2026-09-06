@@ -18,7 +18,7 @@ const VERSION_TAG = 'coagent-hub exe';
 import childProcess from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
-import { openAppWindow, createDesktopShortcut, isHubAlreadyRunning } from './app-window.mjs';
+import { openAppWindow, createDesktopShortcut, isHubAlreadyRunning, extractAppIcon } from './app-window.mjs';
 import { readLauncherState, saveLauncherState, runLauncher } from './launcher.mjs';
 import { registerInstall, unregisterInstall } from './install-reg.mjs';
 
@@ -216,6 +216,7 @@ async function serve(argv) {
       const ok = createDesktopShortcut({
         name: 'CoAgent Hub',
         target: process.execPath,
+        icon: extractAppIcon(),
         workingDir: path.dirname(process.execPath),
       });
       if (ok) console.log(`  ${C.green('✓ 已在桌面创建「CoAgent Hub」快捷方式，下次双击图标直达')}`);
@@ -267,6 +268,7 @@ async function appMode(argv) {
     const ok = createDesktopShortcut({
       name: 'CoAgent Hub',
       target: process.execPath,
+      icon: extractAppIcon(),
       args: `app --hub ${hubUrl} --token ${opts.token}`,
       workingDir: path.dirname(process.execPath),
     });
