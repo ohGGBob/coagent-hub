@@ -16,8 +16,11 @@ const VERSION_TAG = 'coagent-hub exe';
 
 /* 静态导入（esbuild 打 CJS 时转为 require；此文件不能有顶层 await） */
 import childProcess from 'node:child_process';
+import fs from 'node:fs';
 import path from 'node:path';
 import { openAppWindow, createDesktopShortcut, isHubAlreadyRunning } from './app-window.mjs';
+import { readLauncherState, saveLauncherState, runLauncher } from './launcher.mjs';
+import { registerInstall, unregisterInstall } from './install-reg.mjs';
 
 /* 零依赖 ANSI 彩色（SEA 环境下 stdout 通常是 TTY） */
 const USE_COLOR = !process.env.NO_COLOR && process.stdout.isTTY !== false;
@@ -49,6 +52,11 @@ ${C.cyan('同学（每台开发机）：')}
   coagent.exe note "标题" --body …   上墙共享笔记
   coagent.exe task "标题"           建任务；coagent.exe claim <id> 认领
   coagent.exe watch --live          实时监听组内动态
+  coagent.exe help                  完整命令表
+
+${C.cyan('通用：')}
+  coagent.exe                       双击 → 应用主页面（创建组 / 加入组 / 教程）
+  coagent.exe uninstall             从系统卸载（可在 设置 → 应用 里点击）
   coagent.exe help                  完整命令表
 
 ${C.gray('Agent 自助接入：浏览器或 curl 打开  http://<主机IP>:8787/guide')}
@@ -192,19 +200,29 @@ async function serve(argv) {
       const how = openAppWindow(panelUrl);
       if (how === 'app') console.log(`  ${C.gray('应用窗口已弹出（关闭本窗口即退出服务）')}`);
     }, 500);
-
-    // 首次运行成功后在桌面创建快捷方式，下次双击桌面图标直达
-    if (bootstrap.firstRun && process.platform === 'win32') {
-      setTimeout(() => {
-        const ok = createDesktopShortcut({
-          name: 'CoAgent Hub',
-          target: process.execPath,
-          workingDir: path.dirname(process.execPath),
-        });
-        if (ok) console.log(`  ${C.green('✓ 已在桌面创建「CoAgent Hub」快捷方式，下次双击图标直达')}`);
-      }, 1200);
-    }
   }
+
+  // 记住「主机」角色（主页面据此渲染状态）
+  saveLauncherState(config.PATHS.launcherState, { mode: 'host' });
+
+  // SEA exe：注册到 Windows「设置 → 应用」，支持从系统里卸载
+  if (process.env.COAGENT_ENTRY === 'sea') {
+    registerInstall({ exePath: process.execPath, version: config.HUB_VERSION });
+  }
+
+  // SEA exe 首次运行成功后在桌面创建快捷方式（源码模式 execPath 是 node，跳过）
+  if (bootstrap.firstRun && !flags.noBrowser && process.platform === 'win32' && process.env.COAGENT_ENTRY === 'sea') {
+    setTimeout(() => {
+      const ok = createDesktopShortcut({
+        name: 'CoAgent Hub',
+        target: process.execPath,
+        workingDir: path.dirname(process.execPath),
+      });
+      if (ok) console.log(`  ${C.green('✓ 已在桌面创建「CoAgent Hub」快捷方式，下次双击图标直达')}`);
+    }, 1200);
+  }
+
+  return { port: actualPort };
 }
 
 /**
@@ -238,11 +256,14 @@ async function appMode(argv) {
     return;
   }
 
+  // 记住「同学」角色：之后双击 exe 也能直达（无需用快捷方式）
+  saveLauncherState((await import('../src/config.js')).PATHS.launcherState, { mode: 'join', hub: hubUrl, token: opts.token });
+
   // token 走 URL fragment：不进服务器日志、不进浏览器历史，进面板后立即清除
   const how = openAppWindow(`${hubUrl}/panel#token=${encodeURIComponent(opts.token)}`);
   console.log(`  ${C.green('✓ 应用窗口已打开（' + (how === 'app' ? '独立窗口' : '默认浏览器') + '模式）')}`);
 
-  if (opts.save && process.platform === 'win32') {
+  if (opts.save && process.platform === 'win32' && process.env.COAGENT_ENTRY === 'sea') {
     const ok = createDesktopShortcut({
       name: 'CoAgent Hub',
       target: process.execPath,
@@ -252,6 +273,48 @@ async function appMode(argv) {
     if (ok) console.log(`  ${C.green('✓ 已在桌面创建「CoAgent Hub」快捷方式，下次双击图标直达')}`);
   }
   console.log(`  ${C.gray('本窗口可以关掉，不影响使用（浏览器窗口独立于本进程）')}`);
+}
+
+/**
+ * 卸载：从「设置 → 应用」移除注册、删桌面快捷方式，可选清空数据，
+ * 最后延迟自删 exe（等本进程退出释放文件锁）。
+ */
+async function uninstall() {
+  console.log(`\n  ${C.bold('CoAgent Hub 卸载')}`);
+  const { PATHS } = await import('../src/config.js');
+  const dataDir = PATHS.data;
+
+  // 数据是否一起删：SEA 双击场景 TTY 可交互；否则默认保留
+  let wipe = false;
+  if (process.stdin.isTTY) {
+    process.stdout.write('  同时删除全部数据（data\\ 目录，含代码仓/任务/聊天记录）？[y/N] ');
+    wipe = await new Promise((resolve) => {
+      let buf = '';
+      const onData = (d) => {
+        buf += d.toString().trim().toLowerCase();
+        process.stdin.removeListener('data', onData);
+        resolve(buf === 'y' || buf === 'yes');
+      };
+      process.stdin.on('data', onData);
+      setTimeout(() => { process.stdin.removeListener('data', onData); resolve(false); }, 15_000).unref();
+    });
+  }
+
+  unregisterInstall();
+  try { fs.rmSync(path.join(process.env.USERPROFILE ?? '', 'Desktop', 'CoAgent Hub.lnk'), { force: true }); } catch { /* 忽略 */ }
+  try { fs.rmSync(path.join(exeDir, 'data', 'launcher.json'), { force: true }); } catch { /* 忽略 */ }
+
+  console.log(`  ✓ 已从「设置 → 应用」移除注册，桌面快捷方式已删除`);
+  console.log(`  ${wipe ? '✓ 数据目录将一并删除' : '数据目录保留在 ' + dataDir + '（可手动删除）'}`);
+
+  // 延迟自删：本进程退出后文件锁才释放；路径含中文时走 PowerShell（Unicode 安全）
+  const script =
+    `Start-Sleep -Seconds 2;` +
+    `Remove-Item -LiteralPath '${process.execPath.replace(/'/g, "''")}' -Force -ErrorAction SilentlyContinue;` +
+    (wipe ? `Remove-Item -LiteralPath '${dataDir.replace(/'/g, "''")}' -Recurse -Force -ErrorAction SilentlyContinue;` : '');
+  cp.spawn('powershell', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', script], { detached: true, stdio: 'ignore' }).unref();
+  console.log(`\n  再见 👋`);
+  setTimeout(() => process.exit(0), 300);
 }
 
 async function cli(argv) {
@@ -272,10 +335,33 @@ async function cli(argv) {
 
 async function main() {
   const argv = process.argv.slice(2);
-  const cmd = (argv[0] ?? 'serve').toLowerCase();
+  const cmd = (argv[0] ?? '').toLowerCase();
+
+  // 无参数（双击 exe / 桌面快捷方式）：进入应用主页面；
+  // 若本机 Hub 已在跑，直接打开面板窗口。
+  // 注意：config 必须在此分支内才加载——serve/app 的 --port 环境变量要在
+  // config 模块读取 COAGENT_PORT 之前注入（SEA 打包后 config 是单例）。
+  if (!cmd) {
+    const config = await import('../src/config.js');
+    if (await isHubAlreadyRunning(config.PORT)) {
+      openAppWindow(`http://localhost:${config.PORT}/panel`);
+      return;
+    }
+    await runLauncher({
+      version: 'v' + config.HUB_VERSION,
+      stateFile: config.PATHS.launcherState,
+      startHost: async () => {
+        // --no-browser：主页面自己会导航进面板，避免弹两个窗口
+        const r = await serve(['--no-browser']);
+        return { url: `http://localhost:${r.port}` };
+      },
+    });
+    return;
+  }
 
   if (cmd === 'serve') return serve(argv.slice(1));
   if (cmd === 'app') return appMode(argv.slice(1));
+  if (cmd === 'uninstall') return uninstall();
   if (cmd === 'help' || cmd === '--help' || cmd === '-h') return console.log(usage());
   if (cmd === 'version' || cmd === '--version' || cmd === '-v') {
     return console.log(`${VERSION_TAG}  node ${process.version}`);

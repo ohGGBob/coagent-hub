@@ -127,8 +127,8 @@ if (!noBrowser) {
     openAppWindow(`http://localhost:${actualPort}/panel`);
   }, 500);
 
-  // 首次运行成功后在桌面创建快捷方式，下次双击图标直达
-  if (bootstrap.firstRun && process.platform === 'win32') {
+  // 首次运行成功后在桌面创建快捷方式（仅 SEA exe 环境；源码模式 execPath 是 node，跳过）
+  if (bootstrap.firstRun && process.platform === 'win32' && process.env.COAGENT_ENTRY === 'sea') {
     setTimeout(() => {
       const ok = createDesktopShortcut({
         name: 'CoAgent Hub',

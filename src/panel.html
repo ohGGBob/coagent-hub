@@ -509,6 +509,7 @@ tr:hover td { background: var(--bg-hover); }
       <div class="nav-item" data-page="branches" onclick="nav('branches')"><span class="icon">🌿</span><span>分支</span></div>
       <div class="nav-section">系统</div>
       <div class="nav-item" data-page="activity" onclick="nav('activity')"><span class="icon">⚡</span><span>活动流</span></div>
+      <div class="nav-item" data-page="tutorial" onclick="nav('tutorial')"><span class="icon">📘</span><span>教程</span></div>
       <div class="nav-item" data-page="onboard" onclick="nav('onboard')"><span class="icon">🔗</span><span>接入向导</span></div>
       <div class="nav-item" data-page="users" onclick="nav('users')"><span class="icon">👥</span><span>用户管理</span></div>
       <div class="nav-item" data-page="settings" onclick="nav('settings')"><span class="icon">⚙️</span><span>设置</span></div>
@@ -534,6 +535,7 @@ tr:hover td { background: var(--bg-hover); }
       <button class="icon-btn" onclick="toggleNotif()" title="通知">🔔<span class="notif-dot" id="notif-dot" style="display:none"></span></button>
       <button class="icon-btn" onclick="toggleTheme()" title="切换主题">🌓</button>
       <button class="icon-btn" onclick="refreshAll()" title="刷新">↻</button>
+      <button class="icon-btn" onclick="shutdownHub()" title="退出服务（主机）">⏻</button>
     </div>
     <div class="content" id="content"></div>
   </div>
@@ -745,6 +747,16 @@ $('token-in').addEventListener('keydown', (e) => { if (e.key === 'Enter') login(
 })();
 function logout() { sessionStorage.removeItem(TOKEN_KEY); location.reload(); }
 
+/* ---------- 退出服务（主机） ---------- */
+async function shutdownHub() {
+  if (!confirm('确定退出 Hub 服务？全组将断开连接（数据已实时落盘，下次双击 CoAgent Hub 图标可再次启动）。')) return;
+  try { await api('POST', '/shutdown'); } catch (e) { toast('✗ ' + e.message + '（需要主机本机 + 管理员权限）', 'err'); return; }
+  sessionStorage.removeItem(TOKEN_KEY);
+  try { WS?.close(); } catch {}
+  if (POLL_TIMER) clearInterval(POLL_TIMER);
+  document.documentElement.innerHTML = '<body style="background:#0d1117;color:#e6edf3;display:flex;align-items:center;justify-content:center;height:100vh;font-family:Segoe UI,Microsoft YaHei,sans-serif"><div style="text-align:center"><div style="font-size:42px">👋</div><p style="margin-top:12px">服务已退出，可以关闭本窗口。</p><p style="color:#8b949e;font-size:13px;margin-top:6px">下次双击 CoAgent Hub 图标即可再次启动。</p></div></body>';
+}
+
 /* ---------- 启动 ---------- */
 async function boot() {
   $('login').style.display = 'none';
@@ -831,12 +843,12 @@ function updateBadges() {
 function nav(page) {
   PAGE = page;
   document.querySelectorAll('.nav-item').forEach((el) => el.classList.toggle('active', el.dataset.page === page));
-  $('page-title').textContent = { dashboard:'仪表盘', tasks:'任务板', messages:'消息', context:'共享上下文', reviews:'审核 / PR', branches:'分支管理', activity:'活动流', onboard:'接入向导', users:'用户管理', settings:'设置' }[page] || page;
+  $('page-title').textContent = { dashboard:'仪表盘', tasks:'任务板', messages:'消息', context:'共享上下文', reviews:'审核 / PR', branches:'分支管理', activity:'活动流', tutorial:'协作教程', onboard:'接入向导', users:'用户管理', settings:'设置' }[page] || page;
   renderCurrent();
 }
 function renderCurrent() {
   ({ dashboard: renderDashboard, tasks: renderTasks, messages: renderMessages, context: renderContext, reviews: renderReviews,
-     branches: renderBranches, activity: renderActivity, onboard: renderOnboard, users: renderUsers, settings: renderSettings }[PAGE] || renderDashboard)();
+     branches: renderBranches, activity: renderActivity, tutorial: renderTutorial, onboard: renderOnboard, users: renderUsers, settings: renderSettings }[PAGE] || renderDashboard)();
 }
 
 /* ============================================================
@@ -1138,6 +1150,51 @@ async function postTaskComment(taskId) {
     await refreshAll();
     openTaskDetail(taskId); // 刷新模态
   } catch (e) { toast('✗ ' + e.message, 'err'); }
+}
+
+/* ============================================================
+   协作教程（内置说明书）
+   ============================================================ */
+function renderTutorial() {
+  const step = (n, title, body) => `
+    <div class="wizard-step"><div class="wizard-num">${n}</div><div class="wizard-body">
+      <div class="card-title">${title}</div><p style="font-size:12px;color:var(--text-sub);line-height:1.7">${body}</p>
+    </div></div>`;
+  $('content').innerHTML = `
+    <div class="page-header"><h2>协作教程</h2><p>两分钟学会一个小组怎么用它共同开发 · 也是内置说明书</p></div>
+
+    <div class="card"><div class="card-title">三个角色</div><ul style="font-size:12px;color:var(--text-sub);line-height:2;padding-left:18px">
+      <li><b style="color:var(--text)">主机（群主）</b>：启动 Hub 服务的那台电脑，代码仓、任务板、聊天都在这里。</li>
+      <li><b style="color:var(--text)">同学（成员）</b>：自己的电脑连过来，各写各的代码（每人一条私有分支），互不打架。</li>
+      <li><b style="color:var(--text)">Agent</b>：同学用的本地 AI 工具（Codex / Claude Code / Zcode …），每个工具一个账号。</li>
+    </ul></div>
+
+    <div class="card"><div class="card-title">🚀 主机：三步开组</div>
+      ${step(1, '双击 CoAgent Hub 图标 → 点「启动 Hub 服务」', '本机成为主机；把局域网地址发给同学。跨网络建议全员装 <a href="https://tailscale.com" target="_blank" style="color:var(--accent)">Tailscale</a>（免费）。')}
+      ${step(2, '「接入向导」页：安全检查 + 开户', '先一键轮换种子 token，再给每个同学开户生成接入卡片。')}
+      ${step(3, '把接入卡片发给同学', '卡片含 Hub 地址和 token。同学的 agent 也可以自助接入：fetch <code style="font-family:var(--mono)">' + esc(location.origin) + '/guide</code> 并照做。')}
+    </div>
+
+    <div class="card"><div class="card-title">🤝 同学：三步加群</div>
+      ${step(1, '双击 CoAgent Hub 图标 → 点「加入已有的组」', '填接入卡片上的 Hub 地址和 token。')}
+      ${step(2, '自动进入应用并登录', '桌面同时生成快捷方式，以后双击图标直达。')}
+      ${step(3, '让 agent 开工', '项目目录执行 <code style="font-family:var(--mono)">init</code>（首次拉代码）→ <code style="font-family:var(--mono)">sync</code>（开工）→ <code style="font-family:var(--mono)">push</code>（收工）。')}
+    </div>
+
+    <div class="card"><div class="card-title">📅 每天的协作节奏</div><ul style="font-size:12px;color:var(--text-sub);line-height:2;padding-left:18px">
+      <li><b style="color:var(--text)">开工</b>：任务板认领任务，消息页打个招呼。</li>
+      <li><b style="color:var(--text)">干活</b>：只在自己的私有分支 <code style="font-family:var(--mono)">dev/你的ID</code> 上写代码，写完 push。</li>
+      <li><b style="color:var(--text)">上墙</b>：决定 / 进度 / 阻塞写进「共享上下文」，全组可见、可语义搜索。</li>
+      <li><b style="color:var(--text)">合码</b>：进 main 必须走审核——他人批准后合并，禁止自审。</li>
+      <li><b style="color:var(--text)">收工</b>：主机点右上角 ⏻ 退出服务；同学直接关窗口，下次双击图标接着来。</li>
+    </ul></div>
+
+    <div class="card"><div class="card-title">❓ 常见问题</div><ul style="font-size:12px;color:var(--text-sub);line-height:2;padding-left:18px">
+      <li><b style="color:var(--text)">连不上主机？</b>查地址 / 主机在线 / 防火墙放行端口；跨网络用 Tailscale。</li>
+      <li><b style="color:var(--text)">token 丢了？</b>管理员在「用户管理」页轮换新 token，旧的立即失效。</li>
+      <li><b style="color:var(--text)">数据在哪？</b>主机 exe 同目录 <code style="font-family:var(--mono)">data\\</code>，整个文件夹拷走即备份迁移。</li>
+      <li><b style="color:var(--text)">不用了怎么删？</b>Windows「设置 → 应用」找到 CoAgent Hub 卸载（会清快捷方式与数据）。</li>
+    </ul></div>`;
 }
 
 /* ============================================================

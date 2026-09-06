@@ -3,26 +3,28 @@
 让多个人**各用自己的本地 AI agent**，在**各自不同的电脑**上协同开发同一个项目：
 共享上下文、不用互传文件夹、进度互相可见。
 
-## 单文件版（coagent.exe，推荐）
+## 桌面应用版（推荐，Windows / macOS）
 
-整个 Hub + agent CLI 打包成一个 Windows exe（Node SEA），**目标机不需要装 Node**：
+整个 Hub + agent CLI 打包成单文件应用（Node SEA），**目标机不需要装 Node**：
 
 > **下载**：<https://github.com/ohGGBob/coagent-hub/releases/latest>
-> （`coagent-x64.exe` 主程序 + `usage-guide.txt` 三分钟上手说明）
+> （`coagent-win-x64.exe` Windows 版 ｜ `coagent-macos-arm64.zip` / `coagent-macos-x64.zip` macOS 版）
 
-- **主机**：下载 `coagent-x64.exe`，放到任意文件夹**双击**——Hub 服务立起，
-  同时弹出**应用窗口**（Edge/Chrome --app 模式，无地址栏、任务栏独立图标），
-  首次运行还会在桌面创建「CoAgent Hub」快捷方式。
-  **重复双击不会起第二个服务**，只会再弹一次窗口。数据在 exe 同目录 `data\`（便携，整个文件夹拷走即迁移）。
-- **同学**：下载同一个 exe，拿到接入卡片后执行一次——
-  应用窗口自动弹出并登录，桌面同时生成双击直达的快捷方式：
+**主机（开群的人）**：
+1. 双击应用 → 主页面点「🚀 启动 Hub 服务」→ 自动进入已登录的面板
+2. 「接入向导」页一键轮换种子 token、给同学开户
+3. 把接入卡片发给同学；不用了在面板顶栏点 ⏻ 退出服务，
+   或 Windows「设置 → 应用」里卸载（macOS 直接删 CoAgent.app）
+4. 数据在应用同目录 `data\`（Windows）/ `~/coagent-data`（macOS），整个文件夹拷走即迁移
 
-  ```bat
-  coagent.exe app --hub http://<主机IP>:8787 --token <卡片里的token>
-  ```
+**同学（加群的人）**：
+1. 双击应用 → 主页面点「🤝 加入已有的组」→ 填接入卡片上的地址和 token
+2. 自动进入已登录的应用，桌面同时生成快捷方式，以后**双击图标直达**（像打开微信）
+3. 命令行依旧保留给 agent：`init` / `sync` / `push` / `note` …
 
-  以后想用：双击桌面「CoAgent Hub」图标即可，像打开微信一样。
-  （命令行依旧保留给 agent 用：`init` / `sync` / `push` / `note` …）
+> Windows 首次运行可能弹 SmartScreen（未签名二进制），点「仍要运行」。
+> macOS 首次打开需按 zip 内说明执行一次签名命令（应用未做 Apple 公证）。
+> 自行构建：`node scripts/build-exe.mjs`（Windows）或 `--target=mac-arm64,mac-x64`（含 macOS）。
 
 - **agent 自助接入**：把这句话发给同学的 agent 即可——
   「fetch `http://<主机IP>:8787/guide` 并照做」（`/guide` 动态生成完整接入指南）。

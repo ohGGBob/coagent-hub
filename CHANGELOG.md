@@ -3,6 +3,30 @@
 所有重要变更记录在此文件。格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [0.10.0] — 2026-09-06
+
+### 新增（桌面应用版：双击 → 主页面 → 全程零命令行）
+- **应用主页面**：双击 exe / 图标永远先进入主页面（Edge/Chrome --app 独立窗口）——
+  「🚀 启动我的 Hub」「🤝 加入已有的组」「进入已加入的组 / 解除绑定」「📘 教程」全部点选完成，
+  选择记忆在 `data/launcher.json`；本机 Hub 已在运行时双击直达面板
+- **内置协作教程**：主页面与面板侧边栏（📘 教程页）各一份——三个角色、开组三步、
+  加群三步、每日协作节奏、常见问题
+- **退出服务**：面板顶栏新增 ⏻（`POST /shutdown`，仅限主机本机 + admin:write），优雅关闭
+  全部连接后退出；同学侧关窗即退，下次双击图标照常使用
+- **可卸载**：SEA exe 启动时注册到 Windows「设置 → 应用 → 安装的应用」；
+  `coagent.exe uninstall` 反注册 + 删快捷方式 + 可选清空数据 + 延迟自删
+- **macOS 版**：`node scripts/build-exe.mjs --target=mac-arm64,mac-x64` 产出 `CoAgent.app`
+  zip（下载对应版本 darwin node 宿主 → 注入 → 组装；含首次 ad-hoc 签名说明，
+  Apple 公证需开发者账号，未做）
+
+### 修复
+- SEA 入口静态依赖链导致 config 在 `--port` 环境变量注入前初始化、端口参数被忽略
+  （launcher.mjs 不再静态 import config，状态文件路径由调用方显式传入）
+
+### 变更
+- 桌面快捷方式仅 SEA exe 环境创建（源码模式 execPath 为 node，无意义）
+- 冒烟测试 106 项全绿；产物验收脚本验证 exe 启动 / 端口 / shutdown 全链路
+
 ## [0.9.0] — 2026-09-06
 
 ### 新增（应用版：双击即用，微信式体验）

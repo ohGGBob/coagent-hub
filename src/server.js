@@ -309,6 +309,17 @@ export function createHub() {
     return { raw: buf, contentType: 'application/json; charset=utf-8' };
   });
 
+  // 优雅退出服务（面板顶栏 ⏻）：仅限本机 + 管理员，局域网成员不能远程关停主机
+  add('POST', /^\/shutdown$/, 'admin:write', ({ req }) => {
+    const ip = req.socket?.remoteAddress ?? '';
+    const loopback = ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1';
+    if (!loopback) throw forbidden('退出服务仅允许在主机本机操作');
+    setTimeout(() => {
+      close().then(() => process.exit(0)).catch(() => process.exit(0));
+    }, 300);
+    return { ok: true, message: '服务正在退出…' };
+  });
+
   // ---------- 事件回放 ----------
   add('GET', /^\/events$/, 'events:read', ({ url }) => {
     const after = Number(url.searchParams.get('after') ?? 0);
