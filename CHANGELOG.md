@@ -6,6 +6,15 @@
 ## [0.6.0] — 2026-09-06
 
 ### 新增
+- **文件附件系统**：
+  - `POST /files` 原始二进制上传（X-Filename 指定文件名，单文件上限 50MB，`COAGENT_MAX_FILE_MB` 可配置）
+  - `GET /files/:id` 下载（Content-Disposition + 正确 MIME）、`GET /files` 列表、`DELETE /files/:id` 删除
+  - 文件存储在 `data/files/`，元数据在 `data/files.json`，新增 `src/files.js` 模块
+- **上下文数据模型扩展**：
+  - `attachments`：文件附件 ID 列表，上下文可挂载任意文件
+  - `metadata`：任意键值对元数据、`source`：来源标识、`links`：关联 URL
+  - `pinned`：置顶标记，`POST /context/:id/pin` 切换置顶，查询默认置顶优先
+  - 查询默认返回上限 200 → 500
 - **启动流程大幅简化**：
   - 端口冲突自动递增（8787→8788→…最多试 10 个），不再因端口被占而启动失败
   - 首次启动自动打开浏览器到面板页（`--no-browser` 可禁用）

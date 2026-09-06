@@ -35,6 +35,8 @@ export const ROOT = HERE ? path.resolve(HERE, '..') : path.dirname(process.execP
  * @property {string} tasks    任务板 tasks.json
  * @property {string} reviews  审核记录 reviews.json
  * @property {string} comments 评论 comments.json
+ * @property {string} files    文件附件目录
+ * @property {string} fileMeta 文件元数据 files.json
  * @property {string} tmp      临时目录（接收 bundle 用）
  */
 
@@ -50,6 +52,8 @@ export const PATHS = Object.freeze({
   tasks: path.join(DATA_DIR, 'tasks.json'),
   reviews: path.join(DATA_DIR, 'reviews.json'),
   comments: path.join(DATA_DIR, 'comments.json'),
+  files: path.join(DATA_DIR, 'files'),
+  fileMeta: path.join(DATA_DIR, 'files.json'),
   tmp: path.join(DATA_DIR, 'tmp'),
 });
 
@@ -64,7 +68,7 @@ export const PROTECTED_BRANCHES = Object.freeze(['main']);
 
 /** 建立数据目录与其子目录；幂等 */
 export function ensureDirs() {
-  for (const dir of [PATHS.data, PATHS.tmp]) {
+  for (const dir of [PATHS.data, PATHS.tmp, PATHS.files]) {
     fs.mkdirSync(dir, { recursive: true });
   }
 }

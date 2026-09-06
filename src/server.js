@@ -21,6 +21,7 @@ import { createContextStore } from './context.js';
 import { createTaskStore } from './tasks.js';
 import { createReviewStore } from './reviews.js';
 import { createCommentStore } from './comments.js';
+import { createFileStore } from './files.js';
 import { loadUsers, verify, requireScope, createUser, listUsersPublic, rotateToken, deleteUser, getBootstrapInfo } from './auth.js';
 import * as repo from './git-repo.js';
 import { HubError, badRequest, notFound, newUpgradeRequired, forbidden } from './errors.js';
@@ -118,6 +119,9 @@ export function createHub() {
     eventLog,
     onTaskComment: (taskId, delta) => tasks.incComment(taskId, delta),
   });
+
+  // 文件附件存储
+  const files = createFileStore();
 
   // 鉴权语义：scope === null 表示公开端点；'@auth' 表示需登录但不校验具体 scope。
   const PUBLIC = null;
@@ -293,6 +297,37 @@ export function createHub() {
   add('POST', /^\/context\/([^/]+)\/retract$/, 'context:write', ({ params, user }) => {
     return context.retract(dec(params[0]), user.id);
   });
+
+  add('POST', /^\/context\/([^/]+)\/pin$/, 'context:write', ({ params, body, user }) => {
+    return context.pin(dec(params[0]), user.id, body?.pinned ?? true);
+  });
+
+  // ---------- 文件附件 ----------
+  add('GET', /^\/files$/, 'context:read', () => ({ files: files.list() }));
+
+  add('GET', /^\/files\/([^/]+)$/, 'context:read', ({ params, res }) => {
+    const { meta, data } = files.read(dec(params[0]));
+    res.setHeader('Content-Disposition', `inline; filename="${encodeURIComponent(meta.filename)}"`);
+    return { raw: data, contentType: meta.mimeType };
+  });
+
+  // 原始二进制上传：Content-Type: application/octet-stream，X-Filename 指定文件名
+  add('POST', /^\/files$/, 'context:write', ({ raw, req, user }) => {
+    if (!raw?.length) throw badRequest('文件内容为空（需上传原始二进制）');
+    const filename = decodeURIComponent(req.headers['x-filename'] ?? 'file');
+    const mimeType = req.headers['content-type']?.split(';')[0] ?? 'application/octet-stream';
+    const meta = files.store({ buffer: raw, filename, mimeType, uploadedBy: user.id });
+    eventLog.append({
+      type: 'file.uploaded',
+      authorId: user.id,
+      payload: { id: meta.id, filename: meta.filename, size: meta.size },
+    });
+    return { file: meta };
+  });
+
+  add('DELETE', /^\/files\/([^/]+)$/, 'context:write', ({ params, user }) =>
+    files.remove(dec(params[0]), user.id),
+  );
 
   // ---------- 任务板 ----------
   add('GET', /^\/tasks$/, 'task:read', ({ url }) => ({
@@ -613,7 +648,7 @@ export function createHub() {
     });
   }
 
-  return { server, eventLog, context, tasks, reviews, comments, bus, close, metrics };
+  return { server, eventLog, context, tasks, reviews, comments, files, bus, close, metrics };
 }
 
 /**

@@ -818,6 +818,8 @@ async function renderDashActivity() {
 const PRIORITY_LABELS = { urgent: '紧急', high: '高', medium: '中', low: '低' };
 let DRAG_TASK_ID = null;
 
+let CTX_Q = '', CTX_TYPE = '';
+let CTX_PENDING_FILES = []; // 待上传的文件 {file, meta?}
 let TASK_PRIORITY = '';
 function renderTasks() {
   let tasks = CACHE.tasks;
@@ -976,7 +978,7 @@ function renderContext() {
   const typeColors = { decision: 'accent', progress: 'ok', blocker: 'err', note: 'info', summary: 'purple' };
 
   $('content').innerHTML = `
-    <div class="page-header"><h2>共享上下文</h2><p>全组共享的决策、进度、阻塞与笔记 · 支持 Markdown · 仅作者可撤回</p></div>
+    <div class="page-header"><h2>共享上下文</h2><p>全组共享的决策、进度、阻塞与笔记 · 支持 Markdown · 文件附件 · 仅作者可撤回/置顶</p></div>
     <div class="card">
       <div class="form-row">
         <select class="select" id="cx-type" onchange="CTX_TYPE=this.value;renderContext()">
@@ -988,33 +990,93 @@ function renderContext() {
         <button class="btn" onclick="postCtx()">📝 上墙</button>
       </div>
       <div class="form-row" style="margin-bottom:0">
-        <input class="input" id="cx-q" placeholder="🔍 搜索标题、正文或标签…" value="${esc(CTX_Q)}" style="flex:1" onkeydown="if(event.key==='Enter'){CTX_Q=this.value.trim();renderContext()}">
-        <button class="btn ghost" onclick="CTX_Q=$('cx-q').value.trim();renderContext()">搜索</button>
-        ${CTX_Q ? `<button class="btn ghost sm" onclick="CTX_Q='';$('cx-q').value='';renderContext()">清除</button>` : ''}
+        <label class="btn ghost sm" style="cursor:pointer">📎 附件
+          <input type="file" id="cx-file" multiple style="display:none" onchange="handleCtxFiles(this.files)">
+        </label>
+        <span id="cx-pending" style="font-size:12px;color:var(--text-sub)"></span>
+        <input class="input" id="cx-tags" placeholder="标签（逗号分隔）" style="flex:1;min-width:120px">
+        <input class="input" id="cx-q" placeholder="🔍 搜索…" value="${esc(CTX_Q)}" style="flex:1;min-width:120px" onkeydown="if(event.key==='Enter'){CTX_Q=this.value.trim();renderContext()}">
+        <button class="btn ghost sm" onclick="CTX_Q=$('cx-q').value.trim();renderContext()">搜索</button>
       </div>
     </div>
     ${entries.length ? entries.map((e) => `
-      <div class="ctx-item">
-        <div class="ctx-head"><span class="chip ${typeColors[e.type] || ''}">${typeLabels[e.type] || e.type}</span><span class="ctx-title">${esc(e.title)}</span></div>
+      <div class="ctx-item" style="${e.pinned ? 'border-color:var(--accent);border-left:3px solid var(--accent)' : ''}">
+        <div class="ctx-head">
+          <span class="chip ${typeColors[e.type] || ''}">${typeLabels[e.type] || e.type}</span>
+          ${e.pinned ? '<span class="chip accent">📌 置顶</span>' : ''}
+          <span class="ctx-title">${esc(e.title)}</span>
+        </div>
         ${e.body ? `<div class="ctx-body">${renderMarkdown(e.body)}</div>` : ''}
+        ${e.attachments && e.attachments.length ? `
+          <div style="display:flex;flex-wrap:wrap;gap:6px;margin:8px 0">
+            ${e.attachments.map((fid) => `<a href="/files/${fid}" target="_blank" class="chip" style="text-decoration:none;cursor:pointer">📎 附件 ${fid.slice(0,6)}</a>`).join('')}
+          </div>` : ''}
+        ${e.links && e.links.length ? `
+          <div style="font-size:12px;margin:4px 0">${e.links.map((l) => `<a href="${esc(l)}" target="_blank" style="color:var(--accent);margin-right:8px">🔗 ${esc(l)}</a>`).join('')}</div>` : ''}
         <div class="ctx-meta">
           <span>👤 ${esc(e.authorId)}</span><span>🕐 ${dt(e.createdAt)}（${timeAgo(e.createdAt)}）</span>
           ${e.tags && e.tags.length ? `<span>#${esc(e.tags.join(' #'))}</span>` : ''}
-          ${e.authorId === ME.userId ? `<button class="btn ghost sm" style="margin-left:auto" onclick="retractCtx('${e.id}')">撤回</button>` : ''}
+          ${e.source && e.source !== 'manual' ? `<span class="chip">${esc(e.source)}</span>` : ''}
+          ${e.authorId === ME.userId ? `
+            <button class="btn ghost sm" onclick="pinCtx('${e.id}', ${!e.pinned})">${e.pinned ? '取消置顶' : '📌 置顶'}</button>
+            <button class="btn ghost sm" onclick="retractCtx('${e.id}')">撤回</button>
+          ` : ''}
         </div>
       </div>
     `).join('') : '<div class="card empty"><div class="icon">💬</div><div class="text">没有匹配的上下文条目</div></div>'}
   `;
   $('cx-type').value = CTX_TYPE;
+  updatePendingFiles();
 }
-function postCtx() {
+async function postCtx() {
   const title = $('cx-title').value.trim();
   if (!title) return toast('标题不能为空', 'err');
-  api('POST', '/context', { type: $('cx-type').value || 'note', title, body: $('cx-body').value.trim() })
-    .then(() => { toast('已上墙，全组可见', 'ok'); $('cx-title').value = ''; $('cx-body').value = ''; refreshAll(); })
-    .catch((e) => toast('✗ ' + e.message, 'err'));
+  // 先上传待处理的文件
+  const attachments = [];
+  for (const f of CTX_PENDING_FILES) {
+    try {
+      const meta = await uploadFile(f);
+      attachments.push(meta.id);
+    } catch (e) { toast('✗ 文件上传失败: ' + f.name, 'err'); return; }
+  }
+  const tags = $('cx-tags').value.split(',').map((t) => t.trim()).filter(Boolean);
+  api('POST', '/context', {
+    type: $('cx-type').value || 'note', title,
+    body: $('cx-body').value.trim(),
+    tags, attachments,
+  }).then(() => {
+    toast('已上墙，全组可见', 'ok');
+    $('cx-title').value = ''; $('cx-body').value = ''; $('cx-tags').value = '';
+    CTX_PENDING_FILES = []; updatePendingFiles();
+    refreshAll();
+  }).catch((e) => toast('✗ ' + e.message, 'err'));
+}
+function handleCtxFiles(fileList) {
+  for (const f of fileList) CTX_PENDING_FILES.push(f);
+  updatePendingFiles();
+}
+function updatePendingFiles() {
+  const el = $('cx-pending');
+  if (!el) return;
+  if (CTX_PENDING_FILES.length) {
+    el.innerHTML = CTX_PENDING_FILES.map((f, i) =>
+      `<span class="chip info" style="margin-right:4px">📎 ${esc(f.name)} (${(f.size/1024).toFixed(0)}KB)
+        <span onclick="CTX_PENDING_FILES.splice(${i},1);updatePendingFiles()" style="cursor:pointer;margin-left:4px">✕</span></span>`
+    ).join('');
+  } else el.textContent = '';
+}
+async function uploadFile(file) {
+  const buf = await file.arrayBuffer();
+  const res = await fetch('/files', {
+    method: 'POST',
+    headers: { 'Authorization': 'Bearer ' + TOKEN, 'Content-Type': file.type || 'application/octet-stream', 'X-Filename': encodeURIComponent(file.name) },
+    body: buf,
+  });
+  if (!res.ok) throw new Error('HTTP ' + res.status);
+  return (await res.json()).file;
 }
 function retractCtx(id) { if (!confirm('确定撤回？软删除，留痕。')) return; api('POST', `/context/${id}/retract`).then(() => { toast('已撤回', 'ok'); refreshAll(); }).catch((e) => toast('✗ ' + e.message, 'err')); }
+function pinCtx(id, pinned) { api('POST', `/context/${id}/pin`, { pinned }).then(() => { toast(pinned ? '已置顶' : '已取消置顶', 'ok'); refreshAll(); }).catch((e) => toast('✗ ' + e.message, 'err')); }
 
 /* ============================================================
    审核 / PR（含评论）

@@ -95,6 +95,11 @@ function bm25(entries, q) {
  * @property {string} title
  * @property {string} body
  * @property {string[]} tags
+ * @property {string[]} attachments  文件附件 ID 列表
+ * @property {Record<string,string>} metadata  任意键值元数据
+ * @property {string} [source]  来源标识（agent/manual/import 等）
+ * @property {string[]} links  关联 URL
+ * @property {boolean} pinned  是否置顶
  * @property {string} [taskId]
  * @property {string} [branchId]
  * @property {string} createdAt
@@ -130,7 +135,9 @@ export function createContextStore({ file = PATHS.context, eventLog }) {
   /**
    * 追加一条共享上下文。authorId 由服务端从 token 取，不接受客户端伪造。
    * @param {{authorId: string, type?: string, title: string, body?: string,
-   *          tags?: string[], taskId?: string, branchId?: string}} input
+   *          tags?: string[], taskId?: string, branchId?: string,
+   *          attachments?: string[], metadata?: Record<string,string>,
+   *          source?: string, links?: string[], pinned?: boolean}} input
    * @returns {ContextEntry}
    */
   function append(input) {
@@ -148,6 +155,11 @@ export function createContextStore({ file = PATHS.context, eventLog }) {
       title: input.title.trim(),
       body: input.body ?? '',
       tags: input.tags ?? [],
+      attachments: input.attachments ?? [],
+      metadata: input.metadata ?? {},
+      source: input.source ?? 'manual',
+      links: input.links ?? [],
+      pinned: input.pinned ?? false,
       taskId: input.taskId,
       branchId: input.branchId,
       createdAt: new Date().toISOString(),
@@ -156,7 +168,7 @@ export function createContextStore({ file = PATHS.context, eventLog }) {
     eventLog.append({
       type: 'context.appended',
       authorId: entry.authorId,
-      payload: { id: entry.id, entryType: entry.type, title: entry.title, taskId: entry.taskId },
+      payload: { id: entry.id, entryType: entry.type, title: entry.title, taskId: entry.taskId, attachments: entry.attachments.length },
     });
     return entry;
   }
@@ -164,7 +176,8 @@ export function createContextStore({ file = PATHS.context, eventLog }) {
   /**
    * 检索共享上下文。
    * @param {{taskId?: string, authorId?: string, type?: string, since?: string,
-   *          q?: string, tags?: string[], limit?: number, includeRetracted?: boolean}} [filter]
+   *          q?: string, tags?: string[], limit?: number, includeRetracted?: boolean,
+   *          pinned?: boolean, source?: string}} [filter]
    * @returns {ContextEntry[]}
    */
   function query(filter = {}) {
@@ -172,28 +185,47 @@ export function createContextStore({ file = PATHS.context, eventLog }) {
     const retracted = new Set(
       all.filter((r) => r.kind === 'retract').map((r) => r.targetId),
     );
+    // 解析 pin 标记：{kind:'pin', targetId, pinned}
+    const pinState = new Map();
+    for (const p of all.filter((r) => r.kind === 'pin')) {
+      pinState.set(p.targetId, p.pinned);
+    }
     const since = filter.since ? Date.parse(filter.since) : NaN;
     const q = filter.q?.trim();
     const tags = filter.tags;
 
     let entries = all
-      .filter((e) => e.kind !== 'retract')
+      .filter((e) => e.kind !== 'retract' && e.kind !== 'pin')
       .filter((e) => (filter.includeRetracted ? true : !retracted.has(e.id)))
       .filter((e) => (filter.taskId ? e.taskId === filter.taskId : true))
       .filter((e) => (filter.authorId ? e.authorId === filter.authorId : true))
       .filter((e) => (filter.type ? e.type === filter.type : true))
+      .filter((e) => (filter.source ? e.source === filter.source : true))
       .filter((e) => (Number.isFinite(since) ? Date.parse(e.createdAt) >= since : true))
       .filter((e) => (tags?.length ? tags.every((t) => e.tags.includes(t)) : true));
+
+    // 应用 pin 标记（覆盖条目自身的 pinned 字段）
+    for (const e of entries) {
+      if (pinState.has(e.id)) e.pinned = pinState.get(e.id);
+    }
+    if (filter.pinned !== undefined) {
+      entries = entries.filter((e) => !!e.pinned === filter.pinned);
+    }
 
     if (q) {
       // 相关性检索：多词 BM25 打分（title ×2 权重、tags 计入），只返回有命中的条目
       const scored = bm25(entries, q);
-      const limit = filter.limit ?? 200;
+      const limit = filter.limit ?? 500;
       return scored.slice(0, limit).map((x) => x.entry);
     }
 
-    // 默认按时间正序（回放友好）
-    return entries.slice(-(filter.limit ?? 200));
+    // 默认：置顶优先，然后按时间正序（回放友好）
+    const limit = filter.limit ?? 500;
+    const sorted = entries.sort((a, b) => {
+      if (!!b.pinned !== !!a.pinned) return (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0);
+      return a.createdAt.localeCompare(b.createdAt);
+    });
+    return sorted.slice(-limit);
   }
 
   /**
@@ -217,14 +249,35 @@ export function createContextStore({ file = PATHS.context, eventLog }) {
   }
 
   /**
+   * 置顶/取消置顶条目。追加 pin 标记，不修改原条目（不可变原则）。
+   * @param {string} id
+   * @param {string} userId
+   * @param {boolean} pinned
+   */
+  function pin(id, userId, pinned) {
+    const target = get(id);
+    if (target.authorId !== userId) {
+      throw forbidden('只能置顶自己发布的上下文', { owner: target.authorId });
+    }
+    const marker = { kind: 'pin', id: randomUUID(), targetId: id, pinned: !!pinned, authorId: userId, ts: new Date().toISOString() };
+    appendLine(marker);
+    eventLog.append({
+      type: 'context.pinned',
+      authorId: userId,
+      payload: { id, targetId: id, pinned: !!pinned },
+    });
+    return { id, pinned: !!pinned };
+  }
+
+  /**
    * @param {string} id
    * @returns {ContextEntry}
    */
   function get(id) {
-    const found = readAll().find((e) => e.kind !== 'retract' && e.id === id);
+    const found = readAll().find((e) => e.kind !== 'retract' && e.kind !== 'pin' && e.id === id);
     if (!found) throw notFound(`上下文条目不存在：${id}`);
     return found;
   }
 
-  return { append, query, retract, get };
+  return { append, query, retract, pin, get };
 }
