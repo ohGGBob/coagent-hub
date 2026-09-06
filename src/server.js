@@ -22,6 +22,8 @@ import { createTaskStore } from './tasks.js';
 import { createReviewStore } from './reviews.js';
 import { createCommentStore } from './comments.js';
 import { createFileStore } from './files.js';
+import { createVectorStore } from './vectors.js';
+import { probeEmbedder, embed, embedOne, embedStatus, embedConfig } from './embed.js';
 import { loadUsers, verify, requireScope, createUser, listUsersPublic, rotateToken, deleteUser, getBootstrapInfo, authenticate } from './auth.js';
 import * as repo from './git-repo.js';
 import { HubError, badRequest, notFound, newUpgradeRequired, forbidden } from './errors.js';
@@ -98,7 +100,14 @@ export function createHub() {
   repo.ensureRepo();
 
   const eventLog = createEventLog();
-  const context = createContextStore({ eventLog });
+  // 语义检索（Phase 3）：向量 sidecar + Ollama 嵌入，不可用时自动退回 BM25
+  const vectors = createVectorStore();
+  const context = createContextStore({
+    eventLog,
+    vectors,
+    embedOne,
+    embedModel: () => embedStatus().model,
+  });
   const reviews = createReviewStore({
     eventLog,
     mergeFF: (branch, base) => repo.mergeFF(branch, base),
@@ -122,6 +131,24 @@ export function createHub() {
 
   // 文件附件存储
   const files = createFileStore();
+
+  // 启动后台回填：为缺向量的历史条目分批补嵌（Ollama 可用时才动手，任何失败静默）。
+  // 每 5 分钟重查一次——Ollama 中途上线也能自动补齐。
+  const EMBED_BATCH = 32;
+  async function backfillVectors() {
+    try {
+      if (!embedStatus().available && !(await probeEmbedder()).available) return;
+      for (;;) {
+        const missing = context.missingEmbedTexts(EMBED_BATCH);
+        if (!missing.length) break;
+        const vecs = await embed(missing.map((m) => m.text));
+        if (!vecs) break; // 服务中途不可用，等下轮
+        missing.forEach((m, i) => vectors.append(m.id, vecs[i], embedStatus().model));
+      }
+    } catch { /* 回填失败不影响服务 */ }
+  }
+  backfillVectors();
+  setInterval(() => { backfillVectors(); }, 300_000).unref();
 
   // 鉴权语义：scope === null 表示公开端点；'@auth' 表示需登录但不校验具体 scope。
   const PUBLIC = null;
@@ -275,6 +302,7 @@ export function createHub() {
       reviews: readJsonSafe(PATHS.reviews),
       comments: readJsonSafe(PATHS.comments),
       context: readJsonlSafe(PATHS.context),
+      vectors: readJsonlSafe(PATHS.vectors),
       events: readJsonlSafe(PATHS.events),
     };
     const buf = Buffer.from(JSON.stringify(dump, null, 2), 'utf8');
@@ -290,10 +318,10 @@ export function createHub() {
   });
 
   // ---------- 共享上下文 ----------
-  add('GET', /^\/context$/, 'context:read', ({ url }) => {
+  add('GET', /^\/context$/, 'context:read', async ({ url }) => {
     const q = url.searchParams;
     return {
-      entries: context.query({
+      entries: await context.query({
         taskId: q.get('taskId') ?? undefined,
         authorId: q.get('authorId') ?? undefined,
         type: q.get('type') ?? undefined,
@@ -410,24 +438,24 @@ export function createHub() {
   );
 
   // ---------- 全局搜索（任务 + 上下文 + 事件）----------
-  add('GET', /^\/search$/, 'events:read', ({ url }) => {
+  add('GET', /^\/search$/, 'events:read', async ({ url }) => {
     const q = url.searchParams.get('q')?.trim();
     if (!q) throw badRequest('缺少搜索关键词 q');
     const limit = Number(url.searchParams.get('limit') ?? 20);
     const taskResults = tasks.list({ q }).slice(0, limit).map((t) => ({
       kind: 'task', id: t.id, title: t.title, snippet: t.description?.slice(0, 120) ?? '', status: t.status, priority: t.priority,
     }));
-    const ctxResults = context.query({ q, limit }).map((e) => ({
+    const ctxResults = (await context.query({ q, limit })).map((e) => ({
       kind: 'context', id: e.id, title: e.title, snippet: e.body?.slice(0, 120) ?? '', type: e.type, authorId: e.authorId,
     }));
     return { query: q, tasks: taskResults, context: ctxResults, total: taskResults.length + ctxResults.length };
   });
 
   // ---------- 统计（仪表盘用）----------
-  add('GET', /^\/stats$/, 'events:read', () => {
+  add('GET', /^\/stats$/, 'events:read', async () => {
     const taskStats = tasks.stats();
     const allBranches = repo.listBranches();
-    const ctxEntries = context.query({ limit: 9999 });
+    const ctxEntries = await context.query({ limit: 9999 });
     const allComments = readJsonlSafe(PATHS.comments);
     return {
       tasks: taskStats,
@@ -439,6 +467,16 @@ export function createHub() {
       lastSeq: eventLog.lastSeq,
       wsConnections: bus?.count ?? 0,
       uptime: Math.floor((Date.now() - new Date(metrics.startedAt).getTime()) / 1000),
+    };
+  });
+
+  // ---------- 语义检索状态（Phase 3）----------
+  add('GET', /^\/embed\/status$/, AUTH_ONLY, () => {
+    const st = embedStatus();
+    return {
+      ...st,
+      config: embedConfig(),
+      coverage: { embedded: vectors.size, total: context.count() },
     };
   });
 
@@ -610,7 +648,7 @@ export function createHub() {
         }
       }
 
-      const result = route.handler({ req, res, url, params, user, body, raw }) ?? {};
+      const result = (await route.handler({ req, res, url, params, user, body, raw })) ?? {};
       sendJson(res, 200, result);
     } catch (err) {
       const status = err instanceof HubError ? err.status : 500;

@@ -218,14 +218,34 @@ await admin.users.create({ id: 'julius-wb', name: '尤利乌斯·WorkBuddy' });
 | GET/POST/DELETE | `/users`，POST `/users/:id/rotate` | 用户管理（admin:write） |
 | POST | `/messages` | 结构化群聊消息 |
 | GET | `/healthz`，`/me` | 健康 / 身份 |
+| GET | `/embed/status` | 语义检索状态（可用性/模型/维度/索引覆盖率） |
 | GET | `/metrics` | Prometheus 格式监控指标（请求数/状态码/WS连接数/运行时长） |
 | WS | `/ws?token=&types=&taskId=&since=` | 实时事件推送（WebSocket，断线带 since 重连补齐） |
+
+## 语义检索（Phase 3，可选增强）
+
+装了 Ollama 就自动开启，不装则全程 BM25 关键词检索，**行为零变化**：
+
+```bash
+# 主机上一次性准备（Windows/Mac/Linux 均可）
+winget install Ollama.Ollama        # 或从 ollama.com 下载
+ollama pull bge-m3                  # 约 1.2GB 本地嵌入模型，隐私不出网
+```
+
+- **排序**：`/context?q=` 与 `/search` 自动升级为 hybrid——语义余弦×0.6 + BM25×0.4，
+  零关键词重合的表述也能靠语义召回（结果带 `_via: semantic/hybrid/keyword` 标记）。
+- **全自动**：写路径异步补嵌不阻塞响应；启动及每 5 分钟后台回填历史条目；
+  Ollama 宕机自动退回 BM25，恢复后自动补齐。
+- **配置**：`COAGENT_EMBED_URL`（默认 `http://127.0.0.1:11434`）、
+  `COAGENT_EMBED_MODEL`（默认 `bge-m3`）、`COAGENT_EMBED=0` 强制关闭。
+- **状态**：`GET /embed/status` 查看可用性与索引覆盖率；面板上下文页有实时徽标。
 
 ## 技术要点与已知限制
 
 - **零第三方依赖**：Node ≥18 ESM + 系统 git（子进程）。
 - **单进程假设**：事件 seq 与任务板状态在单进程内保证一致；多进程部署需引入文件锁/数据库（Phase 3）。
-- **检索**：Phase 1 为关键词/标签/时间过滤 + BM25 相关性打分；`ContextEntry.embedding` 字段与接口签名已预留，Phase 3 接本地语义模型。
+- **检索**：关键词/标签/时间过滤 + BM25 相关性打分；Phase 3 已接入本机 Ollama 语义向量
+  （hybrid 排序，见「语义检索」章节），`ContextEntry.embedding` 预留字段由向量 sidecar 承载。
 - **主机离线 = 全员离线**：这是自建中枢的固有代价；Tailscale + 一台常开的机器可缓解。
 - **可观测性**：`GET /metrics` 输出 Prometheus 文本格式指标；访问日志每行含方法/路径/状态码/耗时/字节，设 `COAGENT_ACCESS_LOG=0` 关闭。
 - **优雅关闭**：收到 SIGINT/SIGTERM 时先关闭 WS 连接、停止接受新请求、等待现有请求完成（5s 宽限期），避免数据损坏。

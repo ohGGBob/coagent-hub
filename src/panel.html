@@ -530,6 +530,24 @@ let TOKEN = sessionStorage.getItem(TOKEN_KEY) || '';
 let ME = null, HEALTH = null, PAGE = 'dashboard', WS = null;
 let WS_RECONNECT = 0, POLL_TIMER = null, LAST_SEQ = 0;
 let CACHE = { tasks: [], context: [], reviews: [], branches: [], users: [], events: [], stats: null };
+let EMBED_BADGE = '🧠 检测中…';
+
+/** 拉取语义检索状态，更新徽标文案（Ollama 未启用/不可用时如实显示） */
+async function loadEmbedBadge() {
+  try {
+    const s = await api('GET', '/embed/status');
+    if (!s.available) {
+      EMBED_BADGE = s.config?.enabled === false ? '🧠 语义检索已关闭' : '🧠 语义检索未连接';
+    } else {
+      const pct = s.coverage.total ? Math.round((s.coverage.embedded / s.coverage.total) * 100) : 0;
+      EMBED_BADGE = `🧠 ${esc(s.model)} · 已索引 ${pct}%`;
+    }
+  } catch { EMBED_BADGE = '🧠 语义检索未连接'; }
+  const el = $('cx-embed-badge');
+  if (el) el.textContent = EMBED_BADGE;
+  const el2 = $('set-embed');
+  if (el2) el2.textContent = EMBED_BADGE;
+}
 let UNREAD_COUNT = 0;
 let DESKTOP_NOTIF = localStorage.getItem('coagent_desktop_notif') === '1';
 
@@ -748,6 +766,7 @@ async function refreshAll() {
     CACHE.tasks = tasks.tasks; CACHE.context = ctx.entries; CACHE.reviews = rev.reviews;
     CACHE.branches = br.branches; CACHE.stats = stats;
     if (stats.onlineUsers) $('online-count').textContent = stats.onlineUsers.length;
+    loadEmbedBadge();
     updateBadges(); renderCurrent();
   } catch (e) { if (String(e.message).includes('401')) logout(); }
 }
@@ -1007,6 +1026,7 @@ async function openTaskDetail(id) {
       <div id="task-tab-desc" class="card" style="margin-bottom:12px">
         <div class="card-title">描述</div>
         ${task.description ? renderMarkdown(task.description) : '<span style="color:var(--text-mute)">无描述</span>'}
+        ${task.title ? `<div class="card-title" style="margin-top:14px">🧠 相关上下文</div><div id="task-related" style="font-size:12px;color:var(--text-sub)">检索中…</div>` : ''}
       </div>
       <div id="task-tab-comments" style="display:none">
         <div class="card-title">💬 评论</div>
@@ -1025,7 +1045,21 @@ async function openTaskDetail(id) {
         <button class="btn" id="task-comment-btn" onclick="postTaskComment('${id}')">发送评论</button>
       </div>
     `, 'large');
+    // 语义策展：按任务标题拉最相关的上下文条目（服务端自动 hybrid，无向量时退回关键词）
+    if (task.title) loadRelatedContext(task.title);
   } catch (e) { toast('✗ ' + e.message, 'err'); }
+}
+async function loadRelatedContext(title) {
+  try {
+    const { entries } = await api('GET', `/context?q=${encodeURIComponent(title)}&limit=3`);
+    const el = $('task-related');
+    if (!el) return;
+    el.innerHTML = entries.length ? entries.map((e) =>
+      `<div style="margin:6px 0;padding:6px 8px;border:1px solid var(--border);border-radius:8px">
+        <span class="chip">${e.type}</span> <b>${esc(e.title)}</b>${e._via && e._via !== 'keyword' ? ' <span class="chip purple">🧠</span>' : ''}
+        <span style="color:var(--text-mute)">· ${esc(e.authorId)} · ${timeAgo(e.createdAt)}</span>
+      </div>`).join('') : '<span style="color:var(--text-mute)">没有找到相关条目</span>';
+  } catch { const el = $('task-related'); if (el) el.textContent = '检索失败'; }
 }
 function switchTaskTab(tab) {
   ['desc', 'comments', 'activity'].forEach((t) => {
@@ -1068,7 +1102,7 @@ function renderContext() {
   const typeColors = { decision: 'accent', progress: 'ok', blocker: 'err', note: 'info', summary: 'purple' };
 
   $('content').innerHTML = `
-    <div class="page-header"><h2>共享上下文</h2><p>全组共享的决策、进度、阻塞与笔记 · 支持 Markdown · 文件附件 · 仅作者可撤回/置顶</p></div>
+    <div class="page-header"><h2>共享上下文</h2><p>全组共享的决策、进度、阻塞与笔记 · 支持 Markdown · 文件附件 · 仅作者可撤回/置顶 <span id="cx-embed-badge" class="chip" style="margin-left:8px">${EMBED_BADGE}</span></p></div>
     <div class="card">
       <div class="form-row">
         <select class="select" id="cx-type" onchange="CTX_TYPE=this.value;renderContext()">
@@ -1095,6 +1129,8 @@ function renderContext() {
           <span class="chip ${typeColors[e.type] || ''}">${typeLabels[e.type] || e.type}</span>
           ${e.pinned ? '<span class="chip accent">📌 置顶</span>' : ''}
           <span class="ctx-title">${esc(e.title)}</span>
+          ${e._via === 'semantic' ? '<span class="chip purple" title="语义相关（向量检索命中）">🧠 语义</span>' : ''}
+          ${e._via === 'hybrid' ? '<span class="chip purple" title="语义 + 关键词综合排序">🧠 混合</span>' : ''}
         </div>
         ${e.body ? `<div class="ctx-body">${renderMarkdown(e.body)}</div>` : ''}
         ${e.attachments && e.attachments.length ? `
@@ -1390,8 +1426,13 @@ function renderSettings() {
         <div>实时事件：<code style="font-family:var(--mono);color:var(--accent)">${location.protocol==='https:'?'wss':'ws'}://${location.host}/ws</code></div>
       </div></div>
     <div class="card"><div class="card-title">数据管理</div>
-      <p style="font-size:12px;color:var(--text-sub);margin-bottom:10px">导出全部数据（用户/任务/评论/上下文/事件）为 JSON 备份文件，需管理员权限。</p>
+      <p style="font-size:12px;color:var(--text-sub);margin-bottom:10px">导出全部数据（用户/任务/评论/上下文/向量/事件）为 JSON 备份文件，需管理员权限。</p>
       <button class="btn ghost" onclick="exportData()">💾 导出数据备份</button>
+    </div>
+    <div class="card"><div class="card-title">语义检索（Phase 3）</div>
+      <p style="font-size:12px;color:var(--text-sub);margin-bottom:6px">当前状态：</p>
+      <p><span id="set-embed" class="chip">${EMBED_BADGE}</span></p>
+      <p style="font-size:12px;color:var(--text-sub);margin-top:8px">主机安装 Ollama 并 <code style="font-family:var(--mono)">ollama pull bge-m3</code> 后自动启用；未启用时检索自动退回 BM25。</p>
     </div>
     <div class="card"><div class="card-title">外观与通知</div>
       <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">

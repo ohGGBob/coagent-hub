@@ -11,6 +11,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import http from 'node:http';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
@@ -20,6 +21,40 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 // 必须在 import Hub 之前指定数据目录（config 在模块加载时读取环境变量）
 const TMP_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), 'coagent-smoke-'));
 process.env.COAGENT_DATA = path.join(TMP_ROOT, 'data');
+
+// ---- mock Ollama 嵌入端点（Phase 3 语义检索）----
+// 用「语义词典 → 固定维度向量」生成确定性嵌入：词典词命中则累加对应维度。
+// 这样既有 BM25 断言不受 hybrid 扰动，又能验证语义召回与降级路径。
+const EMBED_DIMS = 6;
+const SEMANTIC_DICT = [
+  ['登录', [1, 0, 0, 0, 0, 0]], ['登入', [1, 0, 0, 0, 0, 0]],
+  ['手机', [0, 1, 0, 0, 0, 0]], ['短信', [0, 1, 0, 0, 0, 0]],
+  ['验证', [0, 0.5, 1, 0, 0, 0]],
+  ['屏幕', [0, 0, 0, 1, 0, 0]], ['显示', [0, 0, 0, 1, 0, 0]],
+  ['数据库', [0, 0, 0, 0, 1, 0]], ['连接', [0, 0, 0, 0, 0.5, 1]],
+];
+function mockVec(text) {
+  const v = new Array(EMBED_DIMS).fill(0);
+  for (const [word, dims] of SEMANTIC_DICT) {
+    if (String(text).includes(word)) dims.forEach((d, i) => { v[i] += d; });
+  }
+  return v;
+}
+const mockOllama = http.createServer((req, res) => {
+  let body = '';
+  req.on('data', (c) => { body += c; });
+  req.on('end', () => {
+    if (req.url === '/api/embed') {
+      try {
+        const { input } = JSON.parse(body || '{}');
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ embeddings: (input ?? []).map(mockVec) }));
+      } catch { res.statusCode = 400; res.end('{}'); }
+    } else { res.statusCode = 404; res.end('{}'); }
+  });
+});
+await new Promise((resolve) => mockOllama.listen(0, '127.0.0.1', resolve));
+process.env.COAGENT_EMBED_URL = `http://127.0.0.1:${mockOllama.address().port}`;
 
 // 兜底清理：进程被强杀（SIGTERM/调试中断）时 finally 不执行，会留下历史临时目录。
 // 只删除超过 1 小时的同前缀目录，避免误伤并行运行的其它 smoke 实例。
@@ -478,6 +513,50 @@ try {
   ok(alice.lastSeq === 0, 'alice 游标未被意外修改（回放不推进游标）');
   const finalBranches = (await alice.branch.list()).branches;
   ok(finalBranches.includes('dev/alice') && finalBranches.includes('dev/bob'), '分支全景完整');
+
+  // ------------------------------------------------------------ 14. 语义检索（mock Ollama）
+  section('14. 语义检索（mock Ollama）');
+  {
+    // 等启动回填把既有条目嵌入完成（coverage 收敛）
+    let st = null;
+    for (let i = 0; i < 50; i++) {
+      st = await alice.request('GET', '/embed/status');
+      if (st.available && st.coverage.total > 0 && st.coverage.embedded >= st.coverage.total) break;
+      await sleep(100);
+    }
+    ok(st.available === true, 'mock Ollama 探测成功（/embed/status available）');
+    ok(st.provider === 'ollama' && st.model === 'bge-m3' && st.dim === EMBED_DIMS, `嵌入来源/模型/维度正确（${st.provider} / ${st.model} / ${st.dim} 维）`);
+    ok(st.coverage.embedded > 0 && st.coverage.embedded >= st.coverage.total, `历史条目已回填向量（${st.coverage.embedded}/${st.coverage.total}）`);
+
+    // 语义-only 召回：查询词与条目无任何关键词/bigram 重合，仅靠向量相似命中
+    await alice.context.append({ type: 'note', title: '移动端支持短信验证码快捷登录' });
+    let semEntry = null;
+    for (let i = 0; i < 50; i++) {
+      const r = await bob.context.query({ q: '手机认证' });
+      semEntry = r.entries.find((e) => e.title.includes('短信验证码'));
+      if (semEntry) break;
+      await sleep(100);
+    }
+    ok(!!semEntry, '语义-only 命中：零关键词重合仍能召回（BM25 单独做不到）');
+    ok(semEntry?._via === 'semantic', `标记为 semantic（实际：${semEntry?._via ?? '无'}）`);
+
+    // hybrid：查询与条目既有关键词重合又有语义相似
+    const both = await bob.context.query({ q: '登录 短信' });
+    ok(both.entries.some((e) => e.title.includes('短信验证码') && e._via === 'hybrid'), 'hybrid 命中并标记 _via=hybrid');
+
+    // 降级：嵌入服务宕机 → 自动退回 BM25，行为与未启用完全一致
+    mockOllama.closeAllConnections?.();
+    await new Promise((resolve) => mockOllama.close(resolve));
+    await sleep(50);
+    const fb = await bob.context.query({ q: '配色稿' });
+    ok(fb.entries.length === 1 && fb.entries[0]._via === undefined, '嵌入服务宕机：自动退回 BM25（结果无 _via 标记）');
+    const st2 = await alice.request('GET', '/embed/status');
+    ok(st2.available === false && !!st2.lastError, '/embed/status 如实报告不可用与原因');
+
+    // 备份完整性：/admin/export 包含向量 sidecar
+    const exp = await alice.request('GET', '/admin/export');
+    ok(Array.isArray(exp.vectors) && exp.vectors.length > 0, '/admin/export 包含向量数据');
+  }
 } finally {
   server.close();
   // close() 只停止接受新连接，keep-alive 长连接会让进程滞留到超时；

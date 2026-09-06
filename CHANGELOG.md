@@ -3,6 +3,26 @@
 所有重要变更记录在此文件。格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [0.8.0] — 2026-09-06
+
+### 新增（Phase 3：语义检索）
+- **Ollama 语义检索**：零 npm 依赖接入本机 Ollama（`/api/embed`），隐私优先、不出网；
+  Ollama 未安装/宕机/超时（5s）一律静默降级回 BM25，行为与未启用完全一致
+  - 配置：`COAGENT_EMBED_URL`（默认 `http://127.0.0.1:11434`）、`COAGENT_EMBED_MODEL`（默认 `bge-m3`）、`COAGENT_EMBED=0` 强制关闭
+- **hybrid 检索**：`GET /context?q=` 与 `/search` 自动升级为 语义余弦×0.6 + BM25×0.4 综合排序，
+  结果附加 `_score` / `_via`（semantic / keyword / hybrid）标记；无向量条目退回关键词分，API 签名不变
+- **向量 sidecar**：`data/vectors.jsonl` 追加式存储（与事件日志同模式），同条目后写覆盖先写；
+  内存 Float32Array 缓存 + 纯 JS 余弦相似度；`/admin/export` 包含向量数据
+- **自动回填**：写路径 fire-and-forget 补嵌（不阻塞响应）；启动时及每 5 分钟后台分批回填历史条目
+- **`GET /embed/status`**：嵌入服务可用性 / 模型 / 维度 / 索引覆盖率（登录即可）
+- **面板**：上下文页嵌入状态徽标（模型名 + 覆盖率），语义命中标注 🧠；任务详情模态新增
+  「相关上下文」（按任务标题语义拉取 top3）；设置页显示语义检索状态
+
+### 技术
+- 新模块 `src/embed.js`（Ollama 客户端）/ `src/vectors.js`（向量存储）
+- 冒烟测试内置 mock Ollama 端点（确定性词典向量），新增 9 项断言：探测、回填、语义-only 召回、
+  hybrid 标记、宕机降级、备份完整性 —— 105 项全绿
+
 ## [0.7.1] — 2026-09-06
 
 ### 修复

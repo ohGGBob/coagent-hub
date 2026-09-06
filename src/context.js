@@ -112,13 +112,32 @@ function bm25(entries, q) {
  */
 
 /**
- * @param {{file?: string, eventLog: import('./eventlog.js').createEventLog extends (...a:any)=>infer R ? R : any}} deps
+ * @param {{eventLog: import('./eventlog.js').createEventLog extends (...a:any)=>infer R ? R : any,
+ *          vectors?: ReturnType<import('./vectors.js').createVectorStore>,
+ *          embedOne?: (text: string) => Promise<number[]|null>,
+ *          embedModel?: () => string}} deps
  */
-export function createContextStore({ eventLog }) {
+export function createContextStore({ eventLog, vectors, embedOne, embedModel }) {
   // 存储路径固定为模块常量，不接受调用方注入
   const file = PATHS.context;
   fs.mkdirSync(path.dirname(file), { recursive: true });
   if (!fs.existsSync(file)) fs.writeFileSync(file, '');
+
+  /**
+   * 异步补嵌（fire-and-forget）：落盘后为条目生成向量写入 sidecar。
+   * 任何失败静默忽略——语义检索是渐进增强，绝不能影响写路径。
+   * @param {string} targetId
+   * @param {string} text
+   */
+  function scheduleEmbed(targetId, text) {
+    if (!vectors || !embedOne || !text) return;
+    (async () => {
+      try {
+        const vec = await embedOne(text);
+        if (vec) vectors.append(targetId, vec, embedModel?.());
+      } catch { /* 检索自动退回 BM25 */ }
+    })();
+  }
 
   /** @returns {Array<ContextEntry | {kind:'retract', id:string, targetId:string, authorId:string, ts:string}>} */
   function readAll() {
@@ -185,17 +204,19 @@ export function createContextStore({ eventLog }) {
       authorId: entry.authorId,
       payload: { id: entry.id, entryType: entry.type, title: entry.title, taskId: entry.taskId, attachments: entry.attachments.length },
     });
+    scheduleEmbed(entry.id, `${entry.title}\n${entry.body}`);
     return entry;
   }
 
   /**
-   * 检索共享上下文。
+   * 检索共享上下文。带 q 且向量服务可用时自动 hybrid（余弦×0.6 + BM25×0.4），
+   * 否则退回纯 BM25 —— 两种路径的返回结构一致，API 签名不变。
    * @param {{taskId?: string, authorId?: string, type?: string, since?: string,
    *          q?: string, tags?: string[], limit?: number, includeRetracted?: boolean,
    *          pinned?: boolean, source?: string}} [filter]
-   * @returns {ContextEntry[]}
+   * @returns {Promise<Array<ContextEntry & {_score?: number, _via?: string}>>}
    */
-  function query(filter = {}) {
+  async function query(filter = {}) {
     const all = readAll();
     const retracted = new Set(
       all.filter((r) => r.kind === 'retract').map((r) => r.targetId),
@@ -242,10 +263,52 @@ export function createContextStore({ eventLog }) {
     }
 
     if (q) {
-      // 相关性检索：多词 BM25 打分（title ×2 权重、tags 计入），只返回有命中的条目
-      const scored = bm25(entries, q);
       const limit = filter.limit ?? 500;
-      return scored.slice(0, limit).map((x) => x.entry);
+      // 第一路：多词 BM25 打分（title ×2 权重、tags 计入），只保留有命中的条目
+      const scored = bm25(entries, q);
+
+      // 无向量能力或查询嵌入失败：纯 BM25（与历史行为一致）
+      const qvec = vectors?.size && embedOne ? await embedOne(q) : null;
+      if (!qvec) {
+        return scored.slice(0, limit).map((x) => x.entry);
+      }
+
+      // 第二路：语义余弦（对过滤后的全部条目，含 BM25 未命中的）
+      const byId = new Map(entries.map((e) => [e.id, e]));
+      const maxBm = Math.max(...scored.map((s) => s.score), 1e-9);
+      const bmNorm = new Map(scored.map((s) => [s.entry.id, s.score / maxBm]));
+      const cosNorm = new Map();
+      let maxCos = 1e-9;
+      for (const e of entries) {
+        const v = vectors.get(e.id);
+        if (!v) continue;
+        const c = vectors.cosine(qvec, v);
+        if (c > 0) {
+          cosNorm.set(e.id, c);
+          if (c > maxCos) maxCos = c;
+        }
+      }
+      for (const [id, c] of cosNorm) cosNorm.set(id, c / maxCos);
+
+      // hybrid = 0.6×语义 + 0.4×关键词（两侧 max 归一化）
+      const merged = [];
+      for (const id of new Set([...bmNorm.keys(), ...cosNorm.keys()])) {
+        const cos = cosNorm.get(id) ?? 0;
+        const bm = bmNorm.get(id) ?? 0;
+        const score = 0.6 * cos + 0.4 * bm;
+        if (score <= 0) continue;
+        merged.push({
+          entry: byId.get(id),
+          score,
+          via: cos > 0 && bm > 0 ? 'hybrid' : cos > 0 ? 'semantic' : 'keyword',
+        });
+      }
+      merged.sort((a, b) => b.score - a.score);
+      return merged.slice(0, limit).map((x) => {
+        x.entry._score = Number(x.score.toFixed(4));
+        x.entry._via = x.via;
+        return x.entry;
+      });
     }
 
     // 默认：置顶优先，然后按时间正序（回放友好）
@@ -328,6 +391,9 @@ export function createContextStore({ eventLog }) {
       authorId: userId,
       payload: { id, targetId: id, fields: Object.keys(patch) },
     });
+    // 修订改变了内容，重嵌（新向量覆盖旧向量）
+    const revised = { ...target, ...patch };
+    scheduleEmbed(id, `${revised.title ?? ''}\n${revised.body ?? ''}`);
     return { id, revised: true };
   }
 
@@ -341,5 +407,30 @@ export function createContextStore({ eventLog }) {
     return found;
   }
 
-  return { append, query, retract, pin, revise, get };
+  /** 条目总数（不含标记行），/embed/status 覆盖率用 */
+  function count() {
+    return readAll().filter((e) => !e.kind).length;
+  }
+
+  /**
+   * 找出尚无向量的可见条目（启动后台回填用）。
+   * @param {number} [limit]
+   * @returns {Array<{id: string, text: string}>}
+   */
+  function missingEmbedTexts(limit = 50) {
+    if (!vectors) return [];
+    const retracted = new Set(
+      readAll().filter((r) => r.kind === 'retract').map((r) => r.targetId),
+    );
+    const out = [];
+    for (const e of readAll()) {
+      if (out.length >= limit) break;
+      if (e.kind || retracted.has(e.id) || vectors.get(e.id)) continue;
+      const text = `${e.title ?? ''}\n${e.body ?? ''}`.trim();
+      if (text) out.push({ id: e.id, text });
+    }
+    return out;
+  }
+
+  return { append, query, retract, pin, revise, get, count, missingEmbedTexts };
 }
