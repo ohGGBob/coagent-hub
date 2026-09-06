@@ -41,6 +41,8 @@
 ### 修复
 - SEA 入口静态依赖链导致 config 在 `--port` 环境变量注入前初始化、端口参数被忽略
   （launcher.mjs 不再静态 import config，状态文件路径由调用方显式传入）
+- 关闭控制台窗口（Windows SIGHUP/SIGBREAK）现在也走优雅关闭流程，与 Ctrl+C 一致；
+  数据层本就有原子写入 + 事件日志半行修复兜底，强杀/断电亦不损坏数据
 
 ### 变更
 - 桌面快捷方式仅 SEA exe 环境创建（源码模式 execPath 为 node，无意义）

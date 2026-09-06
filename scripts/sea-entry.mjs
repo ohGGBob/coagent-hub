@@ -146,6 +146,9 @@ async function serve(argv) {
   }
   process.on('SIGINT', () => shutdown('SIGINT'));
   process.on('SIGTERM', () => shutdown('SIGTERM'));
+  // Windows 下关闭控制台窗口 / Ctrl+Break 时触发，同样优雅关闭
+  process.on('SIGHUP', () => shutdown('SIGHUP'));
+  process.on('SIGBREAK', () => shutdown('SIGBREAK'));
 
   const actualPort = await listenWithFallback(server, config.PORT);
 

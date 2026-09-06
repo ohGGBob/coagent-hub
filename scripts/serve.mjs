@@ -47,6 +47,7 @@ if (await isHubAlreadyRunning(PORT)) {
 const { server, close } = createHub();
 
 // 优雅关闭：Ctrl+C / 任务管理器结束时先关连接再退，避免半写数据
+// SIGHUP：Windows 下关闭控制台窗口时会触发——同样走优雅关闭
 let shuttingDown = false;
 async function shutdown(signal) {
   if (shuttingDown) return;
@@ -57,6 +58,8 @@ async function shutdown(signal) {
 }
 process.on('SIGINT', () => shutdown('SIGINT'));
 process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGHUP', () => shutdown('SIGHUP'));
+process.on('SIGBREAK', () => shutdown('SIGBREAK'));
 
 /** 端口冲突时自动递增（最多试 10 个） */
 function listenWithFallback(preferred) {
