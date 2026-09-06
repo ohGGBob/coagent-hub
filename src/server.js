@@ -314,7 +314,14 @@ export function createHub() {
     const after = Number(url.searchParams.get('after') ?? 0);
     const limit = Number(url.searchParams.get('limit') ?? 500);
     if (!Number.isInteger(after) || after < 0) throw badRequest('after 必须为非负整数');
-    return { events: eventLog.since(after, limit), lastSeq: eventLog.lastSeq };
+    // type 过滤（逗号分隔多值）：消息页等只关心特定事件的消费方用，避免拉全量再过滤
+    const typeParam = url.searchParams.get('type');
+    const typeFilter = typeParam ? new Set(typeParam.split(',').map((s) => s.trim()).filter(Boolean)) : null;
+    const events = eventLog.since(after, limit);
+    return {
+      events: typeFilter ? events.filter((ev) => typeFilter.has(ev.type)) : events,
+      lastSeq: eventLog.lastSeq,
+    };
   });
 
   // ---------- 共享上下文 ----------

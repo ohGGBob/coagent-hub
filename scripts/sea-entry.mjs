@@ -14,6 +14,11 @@
 
 const VERSION_TAG = 'coagent-hub exe';
 
+/* 静态导入（esbuild 打 CJS 时转为 require；此文件不能有顶层 await） */
+import childProcess from 'node:child_process';
+import path from 'node:path';
+import { openAppWindow, createDesktopShortcut, isHubAlreadyRunning } from './app-window.mjs';
+
 /* 零依赖 ANSI 彩色（SEA 环境下 stdout 通常是 TTY） */
 const USE_COLOR = !process.env.NO_COLOR && process.stdout.isTTY !== false;
 const c = (code) => (s) => (USE_COLOR ? `\x1b[${code}m${s}\x1b[0m` : s);
@@ -24,23 +29,25 @@ const C = {
 
 function usage() {
   return `
-${C.bold('CoAgent Hub')} — 单文件版（serve + agent CLI 二合一）
+${C.bold('CoAgent Hub')} — 单文件版（应用窗口 + Hub 服务 + agent CLI 三合一）
 
 ${C.cyan('主机（开组的那台电脑）：')}
-  coagent.exe                       双击或 serve：启动 Hub，数据在 exe 同目录 data\\
+  coagent.exe                       双击即用：启动 Hub 并弹出应用窗口
+                                    （重复双击不会起第二个服务，直接再弹窗）
   coagent.exe serve --port 9000     换端口
   coagent.exe serve --dir D:\\coagent-data   换数据目录
+  coagent.exe serve --no-browser    不自动弹窗
 
 ${C.cyan('同学（每台开发机）：')}
-  coagent.exe init ./my-work        首次拉取项目并建立私有分支
+  coagent.exe app --hub http://<主机IP>:8787 --token <接入卡片里的token>
+                                    弹出应用窗口并登录，同时在桌面创建
+                                    「CoAgent Hub」快捷方式，以后双击直达
+  coagent.exe init ./my-work --hub <地址> --token <token>
+                                    首次拉取项目并建立私有分支（agent 用）
   coagent.exe sync                  每天开工：拉取全组最新 + 看任务板
   coagent.exe push                  把本地改动分享给全组
   coagent.exe note "标题" --body …   上墙共享笔记
   coagent.exe task "标题"           建任务；coagent.exe claim <id> 认领
-  coagent.exe comment "…" --task <id>  给任务/PR 发评论
-  coagent.exe search "关键词"       全局搜索任务和上下文
-  coagent.exe log                   查看事件历史
-  coagent.exe diff [branch]         查看分支 diff
   coagent.exe watch --live          实时监听组内动态
   coagent.exe help                  完整命令表
 
@@ -58,6 +65,8 @@ function parseServeFlags(argv) {
   }
   return out;
 }
+
+const cp = childProcess;
 
 /** 尝试监听端口，冲突时自动递增（最多试 10 个） */
 function listenWithFallback(server, preferredPort) {
@@ -90,7 +99,6 @@ async function serve(argv) {
   if (flags.dir) process.env.COAGENT_DATA = flags.dir;
 
   // git 依赖检测：缺 git 时给可执行指引（代码协作层无法工作）
-  const cp = await import('node:child_process');
   const g = cp.spawnSync('git', ['--version'], { encoding: 'utf8' });
   if (g.status !== 0 || g.error) {
     console.error(
@@ -99,6 +107,14 @@ async function serve(argv) {
       '  → 装完重新运行本程序。',
     );
     process.exit(1);
+  }
+
+  // 单实例检测：重复双击 exe 时不起第二个服务，直接唤起应用窗口
+  const preferredPort = Number(process.env.COAGENT_PORT ?? 8787);
+  if (await isHubAlreadyRunning(preferredPort)) {
+    console.log(`  ${C.green('✓ CoAgent Hub 已在运行（端口 ' + preferredPort + '），直接打开应用窗口')}`);
+    openAppWindow(`http://localhost:${preferredPort}/panel`);
+    return;
   }
 
   const [{ createHub }, config, auth, os] = await Promise.all([
@@ -169,18 +185,73 @@ async function serve(argv) {
     );
   }
 
-  // 自动打开浏览器（首次启动或非 --no-browser）
+  // 自动打开应用窗口（独立窗口形态；--no-browser 可禁用）
   if (!flags.noBrowser) {
     const panelUrl = `http://localhost:${actualPort}/panel`;
     setTimeout(() => {
-      try {
-        const { exec } = cp;
-        const cmd = process.platform === 'win32' ? `start "" "${panelUrl}"` :
-          process.platform === 'darwin' ? `open "${panelUrl}"` : `xdg-open "${panelUrl}"`;
-        exec(cmd, { shell: true });
-      } catch { /* 自动开浏览器失败不影响服务 */ }
+      const how = openAppWindow(panelUrl);
+      if (how === 'app') console.log(`  ${C.gray('应用窗口已弹出（关闭本窗口即退出服务）')}`);
     }, 500);
+
+    // 首次运行成功后在桌面创建快捷方式，下次双击桌面图标直达
+    if (bootstrap.firstRun && process.platform === 'win32') {
+      setTimeout(() => {
+        const ok = createDesktopShortcut({
+          name: 'CoAgent Hub',
+          target: process.execPath,
+          workingDir: path.dirname(process.execPath),
+        });
+        if (ok) console.log(`  ${C.green('✓ 已在桌面创建「CoAgent Hub」快捷方式，下次双击图标直达')}`);
+      }, 1200);
+    }
   }
+}
+
+/**
+ * 同学侧「双击直达」：coagent.exe app --hub <url> --token <tok>
+ * 校验 Hub 可达 → 弹已登录的应用窗口 → 默认创建桌面快捷方式（--no-save 关闭）。
+ */
+async function appMode(argv) {
+  const opts = { hub: '', token: '', save: true };
+  for (let i = 0; i < argv.length; i++) {
+    if (argv[i] === '--hub') opts.hub = argv[++i];
+    else if (argv[i] === '--token') opts.token = argv[++i];
+    else if (argv[i] === '--no-save') opts.save = false;
+  }
+  if (!opts.hub || !opts.token) {
+    console.error('用法：coagent.exe app --hub http://<主机IP>:8787 --token <接入卡片里的token>');
+    console.error('  （接入卡片由主机同学开户时生成；--no-save 表示不创建桌面快捷方式）');
+    process.exitCode = 1;
+    return;
+  }
+  const hubUrl = opts.hub.replace(/\/+$/, '');
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 3000);
+    const res = await fetch(`${hubUrl}/healthz`, { signal: ctrl.signal });
+    clearTimeout(timer);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  } catch (err) {
+    console.error(`✗ 连不上 Hub（${hubUrl}）：${err?.message ?? err}`);
+    console.error('  → 检查地址是否正确、主机是否开机、防火墙是否放行端口。');
+    process.exitCode = 1;
+    return;
+  }
+
+  // token 走 URL fragment：不进服务器日志、不进浏览器历史，进面板后立即清除
+  const how = openAppWindow(`${hubUrl}/panel#token=${encodeURIComponent(opts.token)}`);
+  console.log(`  ${C.green('✓ 应用窗口已打开（' + (how === 'app' ? '独立窗口' : '默认浏览器') + '模式）')}`);
+
+  if (opts.save && process.platform === 'win32') {
+    const ok = createDesktopShortcut({
+      name: 'CoAgent Hub',
+      target: process.execPath,
+      args: `app --hub ${hubUrl} --token ${opts.token}`,
+      workingDir: path.dirname(process.execPath),
+    });
+    if (ok) console.log(`  ${C.green('✓ 已在桌面创建「CoAgent Hub」快捷方式，下次双击图标直达')}`);
+  }
+  console.log(`  ${C.gray('本窗口可以关掉，不影响使用（浏览器窗口独立于本进程）')}`);
 }
 
 async function cli(argv) {
@@ -204,6 +275,7 @@ async function main() {
   const cmd = (argv[0] ?? 'serve').toLowerCase();
 
   if (cmd === 'serve') return serve(argv.slice(1));
+  if (cmd === 'app') return appMode(argv.slice(1));
   if (cmd === 'help' || cmd === '--help' || cmd === '-h') return console.log(usage());
   if (cmd === 'version' || cmd === '--version' || cmd === '-v') {
     return console.log(`${VERSION_TAG}  node ${process.version}`);

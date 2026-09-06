@@ -63,7 +63,7 @@ export const PATHS = Object.freeze({
 export const PORT = Number(process.env.COAGENT_PORT ?? 8787);
 
 /** 协议版本：源码运行时从 package.json 注入，SEA 打包时由 esbuild define 注入 */
-export const HUB_VERSION = process.env.COAGENT_VERSION ?? '0.8.0';
+export const HUB_VERSION = process.env.COAGENT_VERSION ?? '0.9.0';
 
 /** 受保护分支：只能经审核后的 fast-forward 合入 */
 export const PROTECTED_BRANCHES = Object.freeze(['main']);

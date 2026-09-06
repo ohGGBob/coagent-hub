@@ -10,7 +10,7 @@ import os from 'node:os';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { spawnSync, exec } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 
 // 从 package.json 读取版本号，注入到 config.js 的 HUB_VERSION
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -20,6 +20,7 @@ process.env.COAGENT_VERSION = PKG.version;
 import { createHub } from '../src/server.js';
 import { PORT, PATHS, HUB_VERSION } from '../src/config.js';
 import { defaultTokensActive, getBootstrapInfo } from '../src/auth.js';
+import { openAppWindow, createDesktopShortcut, isHubAlreadyRunning } from './app-window.mjs';
 
 // Hub 的代码协作层依赖 git 子进程；缺 git 时给出可执行的指引而不是一串堆栈
 {
@@ -35,6 +36,14 @@ import { defaultTokensActive, getBootstrapInfo } from '../src/auth.js';
 }
 
 const noBrowser = process.argv.includes('--no-browser');
+
+// 单实例检测：重复启动时不起第二个服务，直接唤起应用窗口
+if (await isHubAlreadyRunning(PORT)) {
+  console.log(`[CoAgent Hub] ✓ 服务已在运行（端口 ${PORT}），直接打开应用窗口`);
+  openAppWindow(`http://localhost:${PORT}/panel`);
+  process.exit(0);
+}
+
 const { server, close } = createHub();
 
 // 优雅关闭：Ctrl+C / 任务管理器结束时先关连接再退，避免半写数据
@@ -112,14 +121,21 @@ if (defaultUsers.length && !bootstrap.firstRun) {
   );
 }
 
-// 自动打开浏览器
+// 自动打开应用窗口（Edge/Chrome --app 独立窗口；找不到回退默认浏览器标签页）
 if (!noBrowser) {
   setTimeout(() => {
-    try {
-      const url = `http://localhost:${actualPort}/panel`;
-      const cmd = process.platform === 'win32' ? `start "" "${url}"` :
-        process.platform === 'darwin' ? `open "${url}"` : `xdg-open "${url}"`;
-      exec(cmd, { shell: true });
-    } catch { /* 忽略 */ }
+    openAppWindow(`http://localhost:${actualPort}/panel`);
   }, 500);
+
+  // 首次运行成功后在桌面创建快捷方式，下次双击图标直达
+  if (bootstrap.firstRun && process.platform === 'win32') {
+    setTimeout(() => {
+      const ok = createDesktopShortcut({
+        name: 'CoAgent Hub',
+        target: process.execPath,
+        workingDir: path.dirname(process.execPath),
+      });
+      if (ok) console.log('[CoAgent Hub] ✓ 已在桌面创建「CoAgent Hub」快捷方式，下次双击图标直达');
+    }, 1200);
+  }
 }

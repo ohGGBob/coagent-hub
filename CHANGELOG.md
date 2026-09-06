@@ -3,6 +3,27 @@
 所有重要变更记录在此文件。格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [0.9.0] — 2026-09-06
+
+### 新增（应用版：双击即用，微信式体验）
+- **应用窗口**：exe 双击后以 Edge/Chrome `--app` 独立窗口打开面板（无地址栏、任务栏
+  独立图标，视觉等同桌面应用）；找不到浏览器时回退默认浏览器标签页。零依赖不变，exe 仍是单文件
+- **单实例检测**：重复双击 exe 不再起第二个服务——探测到本机已有 CoAgent Hub 时直接
+  唤起应用窗口后退出；端口被其他程序占用仍走原有递增逻辑
+- **桌面快捷方式**：主机首次运行成功后自动在桌面创建「CoAgent Hub.lnk」（PowerShell
+  WScript.Shell，失败静默），下次双击图标直达
+- **同学双击直达**：新子命令 `coagent.exe app --hub <地址> --token <token>`——校验
+  Hub 可达后弹出**已登录**的应用窗口，并在桌面创建带参数的快捷方式（`--no-save` 关闭）；
+  token 走 URL fragment 传递（不进服务器日志与浏览器历史），面板读取后立即清除
+- **消息聊天页**：面板新增「消息」——频道列表 + 聊天气泡流 + Enter 发送，WS 实时到达；
+  不在消息页时累计未读徽标。后端 `GET /events` 新增 `type` 过滤参数（逗号分隔多值）供拉取历史
+- **接入向导页**：一站式开组流程——① 种子 token 安全检查与一键轮换 ② 开户表单（接入卡片
+  一键复制/下载 txt）③ 同学接入命令展示与复制（app 双击直达 / agent 三行命令 / /guide 自助）
+
+### 变更
+- `npm start` 与 exe serve 共享同一套窗口/单实例/快捷方式逻辑（新模块 `scripts/app-window.mjs`）
+- 冒烟测试 105 → 106 项全绿（新增 /events type 过滤断言）
+
 ## [0.8.0] — 2026-09-06
 
 ### 新增（Phase 3：语义检索）

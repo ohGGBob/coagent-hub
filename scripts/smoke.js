@@ -556,6 +556,11 @@ try {
     // 备份完整性：/admin/export 包含向量 sidecar
     const exp = await alice.request('GET', '/admin/export');
     ok(Array.isArray(exp.vectors) && exp.vectors.length > 0, '/admin/export 包含向量数据');
+
+    // /events type 过滤：消息页拉聊天历史用
+    await alice.request('POST', '/messages', { body: { text: 'smoke 消息过滤测试', channel: 'smoke-chan' } });
+    const filtered = await alice.request('GET', '/events?type=message.posted&after=0&limit=500');
+    ok(filtered.events.length > 0 && filtered.events.every((ev) => ev.type === 'message.posted'), '/events type 过滤只返回指定类型');
   }
 } finally {
   server.close();

@@ -10,17 +10,19 @@
 > **下载**：<https://github.com/ohGGBob/coagent-hub/releases/latest>
 > （`coagent-x64.exe` 主程序 + `usage-guide.txt` 三分钟上手说明）
 
-- **主机**：下载 `coagent-x64.exe`，放到任意文件夹双击 → 服务立起，
-  数据在 exe 同目录 `data\`（便携，整个文件夹拷走即迁移）。
-- **同学**：下载同一个 exe 当命令行工具用：
+- **主机**：下载 `coagent-x64.exe`，放到任意文件夹**双击**——Hub 服务立起，
+  同时弹出**应用窗口**（Edge/Chrome --app 模式，无地址栏、任务栏独立图标），
+  首次运行还会在桌面创建「CoAgent Hub」快捷方式。
+  **重复双击不会起第二个服务**，只会再弹一次窗口。数据在 exe 同目录 `data\`（便携，整个文件夹拷走即迁移）。
+- **同学**：下载同一个 exe，拿到接入卡片后执行一次——
+  应用窗口自动弹出并登录，桌面同时生成双击直达的快捷方式：
 
   ```bat
-  coagent.exe init ./my-work --hub http://<主机IP>:8787 --token <token>
-  cd my-work
-  coagent.exe sync        :: 开工：拉全员进度 + 看任务板
-  coagent.exe push        :: 收工：推送自己的分支
-  coagent.exe note "登录页完成"   :: 在工作目录内裸敲，无需 --dir
+  coagent.exe app --hub http://<主机IP>:8787 --token <卡片里的token>
   ```
+
+  以后想用：双击桌面「CoAgent Hub」图标即可，像打开微信一样。
+  （命令行依旧保留给 agent 用：`init` / `sync` / `push` / `note` …）
 
 - **agent 自助接入**：把这句话发给同学的 agent 即可——
   「fetch `http://<主机IP>:8787/guide` 并照做」（`/guide` 动态生成完整接入指南）。
@@ -208,7 +210,7 @@ await admin.users.create({ id: 'julius-wb', name: '尤利乌斯·WorkBuddy' });
 | 方法 | 路径 | 说明 |
 |------|------|------|
 | POST | `/auth/login` | 校验 userId+token |
-| GET | `/events?after=<seq>` | 事件回放（离线补齐唯一口） |
+| GET | `/events?after=<seq>&type=a,b` | 事件回放（离线补齐唯一口；type 可过滤消息页等特定消费方） |
 | GET/POST | `/context` | 共享上下文查询 / 追加 |
 | POST | `/context/:id/retract` | 作者撤回 |
 | GET/POST | `/tasks`，POST `/tasks/:id/claim`·`release`，PATCH `/tasks/:id` | 任务板 |
@@ -250,4 +252,6 @@ ollama pull bge-m3                  # 约 1.2GB 本地嵌入模型，隐私不�
 - **可观测性**：`GET /metrics` 输出 Prometheus 文本格式指标；访问日志每行含方法/路径/状态码/耗时/字节，设 `COAGENT_ACCESS_LOG=0` 关闭。
 - **优雅关闭**：收到 SIGINT/SIGTERM 时先关闭 WS 连接、停止接受新请求、等待现有请求完成（5s 宽限期），避免数据损坏。
 - **CORS**：默认 `*`，生产部署可通过 `COAGENT_CORS_ORIGIN=https://your-domain.com` 限定。
-- **Web 面板**：`/panel` 提供仪表盘、任务看板、上下文时间线、审核中心、分支管理、活动流、用户管理；支持深色/浅色主题、WebSocket 实时更新、响应式布局。
+- **Web 面板**：`/panel` 应用式布局——仪表盘、任务看板、消息聊天、上下文时间线、审核中心、
+  分支管理、活动流、接入向导、用户管理；支持深色/浅色主题、WebSocket 实时更新、响应式布局；
+  主机 exe 双击即以独立应用窗口打开。

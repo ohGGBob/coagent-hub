@@ -448,6 +448,31 @@ tr:hover td { background: var(--bg-hover); }
   .sidebar-footer { justify-content: center; }
   .search-trigger { display: none; }
 }
+
+/* ---------- 消息页（聊天） ---------- */
+.msg-layout { display: flex; gap: 14px; height: calc(100vh - 190px); min-height: 420px; }
+.msg-side { width: 180px; flex-shrink: 0; display: flex; flex-direction: column; gap: 4px; }
+.msg-chan { padding: 9px 12px; border-radius: 10px; cursor: pointer; font-size: 13px; color: var(--text-sub); display: flex; align-items: center; gap: 8px; }
+.msg-chan:hover { background: var(--bg-card); }
+.msg-chan.active { background: var(--accent-bg); color: var(--text); font-weight: 600; }
+.msg-chan .n { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.msg-main { flex: 1; display: flex; flex-direction: column; background: var(--bg-card); border: 1px solid var(--border); border-radius: 14px; overflow: hidden; }
+.msg-stream { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 10px; }
+.msg-row { display: flex; gap: 8px; align-items: flex-end; }
+.msg-row.own { flex-direction: row-reverse; }
+.msg-avatar { width: 30px; height: 30px; border-radius: 50%; background: var(--accent-bg); color: var(--accent); display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 13px; flex-shrink: 0; }
+.msg-bubble { max-width: 68%; padding: 8px 12px; border-radius: 14px; background: var(--bg); border: 1px solid var(--border); font-size: 13px; word-break: break-word; }
+.msg-row.own .msg-bubble { background: var(--accent-bg); border-color: transparent; }
+.msg-meta { font-size: 10px; color: var(--text-mute); margin-bottom: 3px; }
+.msg-row.own .msg-meta { text-align: right; }
+.msg-inputbar { display: flex; gap: 8px; padding: 10px 12px; border-top: 1px solid var(--border); }
+.msg-day { align-self: center; font-size: 11px; color: var(--text-mute); }
+.empty-chan { flex: 1; display: flex; align-items: center; justify-content: center; color: var(--text-mute); font-size: 13px; }
+
+/* ---------- 接入向导 ---------- */
+.wizard-step { display: flex; gap: 12px; margin-bottom: 14px; }
+.wizard-num { width: 28px; height: 28px; border-radius: 50%; background: var(--accent); color: #fff; display: flex; align-items: center; justify-content: center; font-weight: 700; flex-shrink: 0; }
+.wizard-body { flex: 1; }
 </style>
 </head>
 <body>
@@ -478,11 +503,13 @@ tr:hover td { background: var(--bg-hover); }
       <div class="nav-item active" data-page="dashboard" onclick="nav('dashboard')"><span class="icon">📊</span><span>仪表盘</span></div>
       <div class="nav-section">协作</div>
       <div class="nav-item" data-page="tasks" onclick="nav('tasks')"><span class="icon">✅</span><span>任务板</span><span class="badge" id="badge-tasks" style="display:none">0</span></div>
+      <div class="nav-item" data-page="messages" onclick="nav('messages')"><span class="icon">🗨️</span><span>消息</span><span class="badge" id="badge-msgs" style="display:none">0</span></div>
       <div class="nav-item" data-page="context" onclick="nav('context')"><span class="icon">💬</span><span>共享上下文</span></div>
       <div class="nav-item" data-page="reviews" onclick="nav('reviews')"><span class="icon">🔍</span><span>审核 / PR</span><span class="badge" id="badge-reviews" style="display:none">0</span></div>
       <div class="nav-item" data-page="branches" onclick="nav('branches')"><span class="icon">🌿</span><span>分支</span></div>
       <div class="nav-section">系统</div>
       <div class="nav-item" data-page="activity" onclick="nav('activity')"><span class="icon">⚡</span><span>活动流</span></div>
+      <div class="nav-item" data-page="onboard" onclick="nav('onboard')"><span class="icon">🔗</span><span>接入向导</span></div>
       <div class="nav-item" data-page="users" onclick="nav('users')"><span class="icon">👥</span><span>用户管理</span></div>
       <div class="nav-item" data-page="settings" onclick="nav('settings')"><span class="icon">⚙️</span><span>设置</span></div>
     </nav>
@@ -529,8 +556,12 @@ const TOKEN_KEY = 'coagent_token_v2';
 let TOKEN = sessionStorage.getItem(TOKEN_KEY) || '';
 let ME = null, HEALTH = null, PAGE = 'dashboard', WS = null;
 let WS_RECONNECT = 0, POLL_TIMER = null, LAST_SEQ = 0;
-let CACHE = { tasks: [], context: [], reviews: [], branches: [], users: [], events: [], stats: null };
+let CACHE = { tasks: [], context: [], reviews: [], branches: [], users: [], events: [], messages: [], stats: null };
 let EMBED_BADGE = '🧠 检测中…';
+/* 消息页状态 */
+let MSG_CHANNEL = 'general';
+let MSG_UNREAD = 0;
+let MSG_LOADED = false;
 
 /** 拉取语义检索状态，更新徽标文案（Ollama 未启用/不可用时如实显示） */
 async function loadEmbedBadge() {
@@ -691,12 +722,22 @@ function login() {
 }
 $('token-in').addEventListener('keydown', (e) => { if (e.key === 'Enter') login(); });
 
+// 「双击直达」：coagent.exe app 用 #token= 传递凭证，进面板立即消费并从地址栏清除
+// （fragment 不会进服务器访问日志，也不会留在浏览器历史）
+(function consumeHashToken() {
+  const m = location.hash.match(/^#token=([A-Za-z0-9_.\-]+)$/);
+  if (!m) return;
+  history.replaceState(null, '', location.pathname + location.search);
+  $('token-in').value = decodeURIComponent(m[1]);
+  login();
+})();
+
 // 首次启动自动填充种子管理员 token（降低上手门槛）
 (async function autoFillBootstrap() {
   try {
     const r = await fetch('/auth/bootstrap');
     const b = await r.json();
-    if (b.firstRun && b.adminToken) {
+    if (b.firstRun && b.adminToken && !$('token-in').value) {
       $('token-in').value = b.adminToken;
       $('login-err').innerHTML = '<span style="color:var(--ok)">✓ 检测到首次启动，已自动填充管理员 token，按 Enter 即可登录</span>';
     }
@@ -734,6 +775,12 @@ function connectWS() {
       updateSeq();
       UNREAD_COUNT++;
       updateNotifDot();
+      // 消息页：实时追加聊天气泡；不在消息页则累计未读
+      if (msg.type === 'message.posted') {
+        if (!CACHE.messages.some((m) => m.seq === msg.seq)) CACHE.messages.push(msg);
+        if (PAGE === 'messages') appendMsgBubble(msg);
+        else { MSG_UNREAD++; updateMsgBadge(); }
+      }
       // 桌面通知：仅对重要事件
       if (DESKTOP_NOTIF && document.visibilityState !== 'visible') {
         const notifMap = {
@@ -767,7 +814,9 @@ async function refreshAll() {
     CACHE.branches = br.branches; CACHE.stats = stats;
     if (stats.onlineUsers) $('online-count').textContent = stats.onlineUsers.length;
     loadEmbedBadge();
-    updateBadges(); renderCurrent();
+    updateBadges();
+    // 消息页由 WS 实时驱动 + 输入框需要保留焦点，不做定时全量重绘
+    if (PAGE !== 'messages') renderCurrent();
   } catch (e) { if (String(e.message).includes('401')) logout(); }
 }
 function updateBadges() {
@@ -782,12 +831,12 @@ function updateBadges() {
 function nav(page) {
   PAGE = page;
   document.querySelectorAll('.nav-item').forEach((el) => el.classList.toggle('active', el.dataset.page === page));
-  $('page-title').textContent = { dashboard:'仪表盘', tasks:'任务板', context:'共享上下文', reviews:'审核 / PR', branches:'分支管理', activity:'活动流', users:'用户管理', settings:'设置' }[page] || page;
+  $('page-title').textContent = { dashboard:'仪表盘', tasks:'任务板', messages:'消息', context:'共享上下文', reviews:'审核 / PR', branches:'分支管理', activity:'活动流', onboard:'接入向导', users:'用户管理', settings:'设置' }[page] || page;
   renderCurrent();
 }
 function renderCurrent() {
-  ({ dashboard: renderDashboard, tasks: renderTasks, context: renderContext, reviews: renderReviews,
-     branches: renderBranches, activity: renderActivity, users: renderUsers, settings: renderSettings }[PAGE] || renderDashboard)();
+  ({ dashboard: renderDashboard, tasks: renderTasks, messages: renderMessages, context: renderContext, reviews: renderReviews,
+     branches: renderBranches, activity: renderActivity, onboard: renderOnboard, users: renderUsers, settings: renderSettings }[PAGE] || renderDashboard)();
 }
 
 /* ============================================================
@@ -1088,6 +1137,219 @@ async function postTaskComment(taskId) {
     toast('评论已发送', 'ok');
     await refreshAll();
     openTaskDetail(taskId); // 刷新模态
+  } catch (e) { toast('✗ ' + e.message, 'err'); }
+}
+
+/* ============================================================
+   消息（聊天）—— 群聊消息的可视化，WS 实时驱动
+   ============================================================ */
+function msgChannels() {
+  const set = new Set(['general']);
+  for (const m of CACHE.messages) {
+    const ch = m.payload?.channel;
+    if (ch) set.add(ch);
+  }
+  return [...set];
+}
+function updateMsgBadge() {
+  const b = $('badge-msgs');
+  if (MSG_UNREAD > 0) { b.style.display = ''; b.textContent = MSG_UNREAD; }
+  else b.style.display = 'none';
+}
+function msgBubbleHTML(ev) {
+  const own = ev.authorId === ME.userId;
+  const text = esc(ev.payload?.text || '').replace(/\n/g, '<br>');
+  const ch = ev.payload?.channel || 'general';
+  const chTag = ch !== 'general' ? `<span class="chip" style="font-size:10px;margin-left:4px">${esc(ch)}</span>` : '';
+  return `
+    <div class="msg-row ${own ? 'own' : ''}">
+      <div class="msg-avatar">${esc((ev.authorId || '?').charAt(0).toUpperCase())}</div>
+      <div>
+        <div class="msg-meta">${own ? '我' : esc(ev.authorId)} · ${timeAgo(ev.ts)}${chTag}</div>
+        <div class="msg-bubble">${text || '<span style="color:var(--text-mute)">（空消息）</span>'}</div>
+      </div>
+    </div>`;
+}
+function appendMsgBubble(ev) {
+  const stream = $('msg-stream');
+  if (!stream || (ev.payload?.channel || 'general') !== MSG_CHANNEL) return;
+  stream.insertAdjacentHTML('beforeend', msgBubbleHTML(ev));
+  stream.scrollTop = stream.scrollHeight;
+}
+async function loadMessages() {
+  try {
+    const r = await api('GET', '/events?type=message.posted&after=0&limit=2000');
+    CACHE.messages = r.events || [];
+    MSG_LOADED = true;
+  } catch { /* 降级：只用 WS 实时收到的 */ }
+}
+async function renderMessages() {
+  if (!MSG_LOADED) await loadMessages();
+  MSG_UNREAD = 0;
+  updateMsgBadge();
+  const channels = msgChannels();
+  const list = CACHE.messages.filter((m) => (m.payload?.channel || 'general') === MSG_CHANNEL);
+  $('content').innerHTML = `
+    <div class="page-header"><h2>消息</h2><p>全组实时群聊 · 发送即广播给所有在线成员 · 按 taskId 可开任务频道</p></div>
+    <div class="msg-layout">
+      <div class="msg-side">
+        ${channels.map((ch) => `
+          <div class="msg-chan ${ch === MSG_CHANNEL ? 'active' : ''}" onclick="switchChannel('${esc(ch)}')">
+            <span>${ch === 'general' ? '🏠' : '📌'}</span><span class="n">${esc(ch)}</span>
+            <span style="font-size:10px;color:var(--text-mute)">${CACHE.messages.filter((m) => (m.payload?.channel || 'general') === ch).length}</span>
+          </div>`).join('')}
+      </div>
+      <div class="msg-main">
+        <div class="msg-stream" id="msg-stream">
+          ${list.length ? list.map(msgBubbleHTML).join('') : '<div class="empty-chan">还没有消息，打个招呼吧 👋</div>'}
+        </div>
+        <div class="msg-inputbar">
+          <input class="input" id="msg-input" placeholder="发消息到 #${esc(MSG_CHANNEL)} …（Enter 发送）"
+                 onkeydown="if(event.key==='Enter'){sendMsg()}">
+          <button class="btn" onclick="sendMsg()">发送</button>
+        </div>
+      </div>
+    </div>`;
+  const stream = $('msg-stream');
+  if (stream) stream.scrollTop = stream.scrollHeight;
+  $('msg-input').focus();
+}
+function switchChannel(ch) { MSG_CHANNEL = ch; renderMessages(); }
+async function sendMsg() {
+  const input = $('msg-input');
+  const text = input.value.trim();
+  if (!text) return;
+  input.value = '';
+  try {
+    await api('POST', '/messages', { text, channel: MSG_CHANNEL });
+    // WS 会推回自己发的消息并追加气泡；网络不佳时这里兜底重拉
+    setTimeout(() => { if (PAGE === 'messages') loadMessages().then(() => { if (PAGE === 'messages') renderMessages(); }); }, 800);
+  } catch (e) {
+    input.value = text;
+    toast('✗ ' + e.message, 'err');
+  }
+}
+
+/* ============================================================
+   接入向导 —— 开组同学的一站式操作台
+   ============================================================ */
+const SEED_USER_IDS = ['alice', 'bob'];
+function copyText(text, tip) {
+  navigator.clipboard.writeText(text).then(() => toast(tip || '已复制到剪贴板', 'ok'))
+    .catch(() => { prompt('请手动复制：', text); });
+}
+function downloadText(filename, text) {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([text], { type: 'text/plain;charset=utf-8' }));
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+function renderOnboard() {
+  const hub = location.origin;
+  $('content').innerHTML = `
+    <div class="page-header"><h2>接入向导</h2><p>把同学拉进来的三步操作台 · 需要管理员权限的操作会自动校验</p></div>
+
+    <div class="card">
+      <div class="wizard-step"><div class="wizard-num">1</div><div class="wizard-body">
+        <div class="card-title">安全检查：轮换种子 token</div>
+        <p style="font-size:12px;color:var(--text-sub)">种子账号（alice / bob）的口令写死在公开源码里，正式使用前必须轮换。</p>
+        <div id="wz-seed" style="margin-top:8px">检查中…</div>
+      </div></div>
+
+      <div class="wizard-step"><div class="wizard-num">2</div><div class="wizard-body">
+        <div class="card-title">给同学开户</div>
+        <div class="form-row">
+          <input class="input" id="wz-uid" placeholder="userId（字母/数字，如 xiaoming-codex）" style="flex:1;min-width:160px">
+          <input class="input" id="wz-name" placeholder="显示名（可选）" style="flex:1;min-width:120px">
+          <button class="btn" onclick="wzCreateUser()">开户</button>
+        </div>
+        <div id="wz-card" style="margin-top:10px"></div>
+      </div></div>
+
+      <div class="wizard-step"><div class="wizard-num">3</div><div class="wizard-body">
+        <div class="card-title">把接入方式发给同学</div>
+        <p style="font-size:12px;color:var(--text-sub)">同学下载 coagent.exe 后，在终端执行下面这条命令——应用窗口会自动弹出并登录，桌面同时生成快捷方式，以后双击直达：</p>
+        <div class="form-row" style="align-items:center">
+          <code style="font-family:var(--mono);font-size:12px;background:var(--bg);padding:8px 10px;border-radius:8px;flex:1;word-break:break-all" id="wz-cmd">coagent.exe app --hub ${esc(hub)} --token &lt;接入token&gt;</code>
+          <button class="btn ghost sm" onclick="copyText(\`coagent.exe app --hub ${esc(hub)} --token <接入token>\`)">复制</button>
+        </div>
+        <p style="font-size:12px;color:var(--text-sub);margin-top:10px">同学用 agent 干活的话，把这三行写进它的指令文件（AGENTS.md / CLAUDE.md）：</p>
+        <div class="form-row" style="align-items:center">
+          <code style="font-family:var(--mono);font-size:12px;background:var(--bg);padding:8px 10px;border-radius:8px;flex:1;white-space:pre-wrap;word-break:break-all">npm run hub -- init ./my-work --hub ${esc(hub)} --token <接入token>
+npm run hub -- sync --dir ./my-work
+npm run hub -- push --dir ./my-work</code>
+          <button class="btn ghost sm" onclick="copyText(\`npm run hub -- init ./my-work --hub ${esc(hub)} --token <接入token>\\nnpm run hub -- sync --dir ./my-work\\nnpm run hub -- push --dir ./my-work\`)">复制</button>
+        </div>
+        <p style="font-size:12px;color:var(--text-sub);margin-top:10px">也可以直接让同学的 agent 自助接入：fetch <code style="font-family:var(--mono)">${esc(hub)}/guide</code> 并照做。</p>
+      </div></div>
+    </div>`;
+  wzCheckSeed();
+}
+async function wzCheckSeed() {
+  const el = $('wz-seed');
+  if (!el) return;
+  try {
+    const { users } = await api('GET', '/users');
+    const seeds = users.filter((u) => SEED_USER_IDS.includes(u.id));
+    if (!seeds.length) {
+      el.innerHTML = '<span style="color:var(--ok);font-size:12px">✓ 种子账号已移除，安全检查通过</span>';
+      return;
+    }
+    el.innerHTML = `
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <span style="color:var(--err);font-size:12px">⚠ 种子账号仍在使用默认 token：${seeds.map((u) => esc(u.id)).join('、')}</span>
+        <button class="btn sm" onclick="wzRotateSeeds()">一键全部轮换</button>
+      </div>
+      <div id="wz-seed-out" style="margin-top:8px"></div>`;
+  } catch (e) {
+    el.innerHTML = `<span style="font-size:12px;color:var(--text-sub)">需要 admin:write 权限才能检查（${esc(e.message)}）。开组同学本人登录即可操作。</span>`;
+  }
+}
+async function wzRotateSeeds() {
+  const out = $('wz-seed-out');
+  if (!out) return;
+  const lines = [];
+  for (const id of SEED_USER_IDS) {
+    try {
+      const { user } = await api('POST', `/users/${id}/rotate`);
+      lines.push(`${id} 的新 token：<code style="font-family:var(--mono)">${esc(user.token)}</code>（只显示这一次，发给本人保存）`);
+    } catch (e) { lines.push(`${id}：✗ ${esc(e.message)}`); }
+  }
+  out.innerHTML = lines.map((l) => `<div style="font-size:12px;margin:4px 0">${l}</div>`).join('');
+  toast('种子 token 已轮换', 'ok');
+}
+async function wzCreateUser() {
+  const id = $('wz-uid').value.trim();
+  const name = $('wz-name').value.trim();
+  if (!id) return toast('userId 不能为空', 'err');
+  try {
+    const { user } = await api('POST', '/users', { id, name: name || undefined });
+    const hub = location.origin;
+    const card =
+`════════ CoAgent Hub 接入卡片 ════════
+Hub 地址：${hub}
+账号：${user.id}${user.name ? `（${user.name}）` : ''}
+Token：${user.token}
+（token 只显示这一次，请妥善保存）
+
+【同学：双击直达应用】
+coagent.exe app --hub ${hub} --token ${user.token}
+
+【Agent：三行命令开工】
+npm run hub -- init ./my-work --hub ${hub} --token ${user.token}
+npm run hub -- sync --dir ./my-work
+npm run hub -- push --dir ./my-work`;
+    $('wz-card').innerHTML = `
+      <div class="card" style="background:var(--bg)">
+        <div class="card-title">✅ 开户成功（token 只显示这一次）</div>
+        <pre style="font-family:var(--mono);font-size:12px;white-space:pre-wrap;word-break:break-all;margin:0">${esc(card)}</pre>
+        <div style="display:flex;gap:8px;margin-top:10px">
+          <button class="btn sm" onclick="copyText(this.closest('.card').querySelector('pre').textContent, '接入卡片已复制')">复制卡片</button>
+          <button class="btn ghost sm" onclick="downloadText('coagent-接入-${esc(user.id)}.txt', this.closest('.card').querySelector('pre').textContent)">下载 .txt</button>
+        </div>
+      </div>`;
+    $('wz-uid').value = ''; $('wz-name').value = '';
   } catch (e) { toast('✗ ' + e.message, 'err'); }
 }
 
