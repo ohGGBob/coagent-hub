@@ -34,6 +34,7 @@ export const ROOT = HERE ? path.resolve(HERE, '..') : path.dirname(process.execP
  * @property {string} context  上下文条目 context.jsonl
  * @property {string} tasks    任务板 tasks.json
  * @property {string} reviews  审核记录 reviews.json
+ * @property {string} comments 评论 comments.json
  * @property {string} tmp      临时目录（接收 bundle 用）
  */
 
@@ -48,14 +49,15 @@ export const PATHS = Object.freeze({
   context: path.join(DATA_DIR, 'context.jsonl'),
   tasks: path.join(DATA_DIR, 'tasks.json'),
   reviews: path.join(DATA_DIR, 'reviews.json'),
+  comments: path.join(DATA_DIR, 'comments.json'),
   tmp: path.join(DATA_DIR, 'tmp'),
 });
 
 /** HTTP 端口（0 = 系统随机分配，冒烟测试用） */
 export const PORT = Number(process.env.COAGENT_PORT ?? 8787);
 
-/** 协议版本，随 Phase 推进递增 */
-export const HUB_VERSION = '0.3.0';
+/** 协议版本：源码运行时从 package.json 注入，SEA 打包时由 esbuild define 注入 */
+export const HUB_VERSION = process.env.COAGENT_VERSION ?? '0.6.0';
 
 /** 受保护分支：只能经审核后的 fast-forward 合入 */
 export const PROTECTED_BRANCHES = Object.freeze(['main']);

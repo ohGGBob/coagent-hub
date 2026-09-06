@@ -51,16 +51,47 @@ const SEED_USERS = [
 /** 种子默认 token 集合——写死在源码里（已公开），正式部署前必须轮换，勿当真实凭证 */
 const SEED_TOKENS = new Set(SEED_USERS.map((u) => u.token));
 
+/** 用户表内存缓存（带 mtime 失效，避免每次 verify 都读文件） */
+let _usersCache = null;
+let _usersCacheMtime = 0;
+
 /**
- * 加载用户表；文件不存在则写入种子。
+ * 加载用户表；文件不存在则写入种子。带内存缓存，文件未变时直接返回。
  * @returns {User[]}
  */
 export function loadUsers() {
-  if (!fs.existsSync(PATHS.users)) {
+  try {
+    const st = fs.statSync(PATHS.users);
+    if (_usersCache && st.mtimeMs === _usersCacheMtime) return _usersCache;
+    const users = readJson(PATHS.users, []);
+    _usersCache = users;
+    _usersCacheMtime = st.mtimeMs;
+    return users;
+  } catch {
+    // 文件不存在：写入种子
     writeJson(PATHS.users, SEED_USERS);
-    return structuredClone(SEED_USERS);
+    _usersCache = structuredClone(SEED_USERS);
+    try { _usersCacheMtime = fs.statSync(PATHS.users).mtimeMs; } catch { _usersCacheMtime = 0; }
+    return _usersCache;
   }
-  return readJson(PATHS.users, []);
+}
+
+/** 使缓存失效（写操作后调用） */
+function invalidateCache() { _usersCache = null; _usersCacheMtime = 0; }
+
+/**
+ * 首次启动引导信息：返回是否首次运行 + 种子管理员 token（面板可自动填充登录）。
+ * 仅当种子默认 token 仍在使用时才返回 token，轮换后返回 null。
+ * @returns {{firstRun: boolean, adminId: string|null, adminToken: string|null}}
+ */
+export function getBootstrapInfo() {
+  const users = loadUsers();
+  const seedAdmin = users.find((u) => SEED_TOKENS.has(u.token) && u.scopes.includes('admin:write'));
+  return {
+    firstRun: users.length === SEED_USERS.length && users.every((u) => SEED_TOKENS.has(u.token)),
+    adminId: seedAdmin?.id ?? null,
+    adminToken: seedAdmin?.token ?? null,
+  };
 }
 
 /**
@@ -94,6 +125,7 @@ export function requireScope(user, scope) {
 /** @returns {User[]} */
 function saveUsers(users) {
   writeJson(PATHS.users, users);
+  invalidateCache();
   return users;
 }
 

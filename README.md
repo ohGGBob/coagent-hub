@@ -218,11 +218,16 @@ await admin.users.create({ id: 'julius-wb', name: '尤利乌斯·WorkBuddy' });
 | GET/POST/DELETE | `/users`，POST `/users/:id/rotate` | 用户管理（admin:write） |
 | POST | `/messages` | 结构化群聊消息 |
 | GET | `/healthz`，`/me` | 健康 / 身份 |
+| GET | `/metrics` | Prometheus 格式监控指标（请求数/状态码/WS连接数/运行时长） |
 | WS | `/ws?token=&types=&taskId=&since=` | 实时事件推送（WebSocket，断线带 since 重连补齐） |
 
 ## 技术要点与已知限制
 
 - **零第三方依赖**：Node ≥18 ESM + 系统 git（子进程）。
 - **单进程假设**：事件 seq 与任务板状态在单进程内保证一致；多进程部署需引入文件锁/数据库（Phase 3）。
-- **检索**：Phase 1 为关键词/标签/时间过滤；`ContextEntry.embedding` 字段与接口签名已预留，Phase 3 接本地语义模型。
+- **检索**：Phase 1 为关键词/标签/时间过滤 + BM25 相关性打分；`ContextEntry.embedding` 字段与接口签名已预留，Phase 3 接本地语义模型。
 - **主机离线 = 全员离线**：这是自建中枢的固有代价；Tailscale + 一台常开的机器可缓解。
+- **可观测性**：`GET /metrics` 输出 Prometheus 文本格式指标；访问日志每行含方法/路径/状态码/耗时/字节，设 `COAGENT_ACCESS_LOG=0` 关闭。
+- **优雅关闭**：收到 SIGINT/SIGTERM 时先关闭 WS 连接、停止接受新请求、等待现有请求完成（5s 宽限期），避免数据损坏。
+- **CORS**：默认 `*`，生产部署可通过 `COAGENT_CORS_ORIGIN=https://your-domain.com` 限定。
+- **Web 面板**：`/panel` 提供仪表盘、任务看板、上下文时间线、审核中心、分支管理、活动流、用户管理；支持深色/浅色主题、WebSocket 实时更新、响应式布局。

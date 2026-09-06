@@ -14,36 +14,74 @@
 
 const VERSION_TAG = 'coagent-hub exe';
 
+/* 零依赖 ANSI 彩色（SEA 环境下 stdout 通常是 TTY） */
+const USE_COLOR = !process.env.NO_COLOR && process.stdout.isTTY !== false;
+const c = (code) => (s) => (USE_COLOR ? `\x1b[${code}m${s}\x1b[0m` : s);
+const C = {
+  bold: c(1), dim: c(2), red: c(31), green: c(32), yellow: c(33),
+  blue: c(34), magenta: c(35), cyan: c(36), gray: c(90),
+};
+
 function usage() {
   return `
-CoAgent Hub — 单文件版（serve + agent CLI 二合一）
+${C.bold('CoAgent Hub')} — 单文件版（serve + agent CLI 二合一）
 
-主机（开组的那台电脑）：
+${C.cyan('主机（开组的那台电脑）：')}
   coagent.exe                       双击或 serve：启动 Hub，数据在 exe 同目录 data\\
   coagent.exe serve --port 9000     换端口
   coagent.exe serve --dir D:\\coagent-data   换数据目录
 
-同学（每台开发机）：
-  coagent.exe init ./my-work        首次拉取项目并建立私有分支（先配好 .coagent.json）
+${C.cyan('同学（每台开发机）：')}
+  coagent.exe init ./my-work        首次拉取项目并建立私有分支
   coagent.exe sync                  每天开工：拉取全组最新 + 看任务板
   coagent.exe push                  把本地改动分享给全组
   coagent.exe note "标题" --body …   上墙共享笔记
   coagent.exe task "标题"           建任务；coagent.exe claim <id> 认领
+  coagent.exe comment "…" --task <id>  给任务/PR 发评论
+  coagent.exe search "关键词"       全局搜索任务和上下文
+  coagent.exe log                   查看事件历史
+  coagent.exe diff [branch]         查看分支 diff
   coagent.exe watch --live          实时监听组内动态
   coagent.exe help                  完整命令表
 
-Agent 自助接入：浏览器或 curl 打开  http://<主机IP>:8787/guide
+${C.gray('Agent 自助接入：浏览器或 curl 打开  http://<主机IP>:8787/guide')}
 `.trim();
 }
 
-/** 解析 serve 子命令的 --port/--dir */
+/** 解析 serve 子命令的 --port/--dir/--no-browser */
 function parseServeFlags(argv) {
-  const out = { port: undefined, dir: undefined };
+  const out = { port: undefined, dir: undefined, noBrowser: false };
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === '--port') out.port = Number(argv[++i]);
     else if (argv[i] === '--dir') out.dir = argv[++i];
+    else if (argv[i] === '--no-browser') out.noBrowser = true;
   }
   return out;
+}
+
+/** 尝试监听端口，冲突时自动递增（最多试 10 个） */
+function listenWithFallback(server, preferredPort) {
+  return new Promise((resolve, reject) => {
+    let port = preferredPort;
+    let attempts = 0;
+    const tryListen = () => {
+      server.once('error', (err) => {
+        if (err.code === 'EADDRINUSE' && attempts < 10) {
+          attempts++;
+          port++;
+          console.log(`  ${C.yellow('端口 ' + (port - 1) + ' 被占用，尝试 ' + port + '…')}`);
+          tryListen();
+        } else {
+          reject(err);
+        }
+      });
+      server.listen(port, () => {
+        server.removeAllListeners('error');
+        resolve(port);
+      });
+    };
+    tryListen();
+  });
 }
 
 async function serve(argv) {
@@ -69,42 +107,80 @@ async function serve(argv) {
     import('../src/auth.js'),
     import('node:os'),
   ]);
-  const { PORT, PATHS, HUB_VERSION } = config;
+  const { PATHS, HUB_VERSION } = config;
 
-  const { server } = createHub();
-  server.listen(PORT, () => {
-    const ips = Object.values(os.networkInterfaces())
-      .flat()
-      .filter((n) => n?.family === 'IPv4' && !n.internal)
-      .map((n) => n.address);
+  const { server, close } = createHub();
 
-    console.log('');
-    console.log('  ╭──────────────────────────────────────────────╮');
-    console.log(`  │  CoAgent Hub ${HUB_VERSION.padEnd(14)}（单文件版）  │`);
-    console.log('  ╰──────────────────────────────────────────────╯');
-    console.log('');
-    console.log(`  本机访问     http://localhost:${PORT}`);
-    for (const ip of ips) console.log(`  局域网访问   http://${ip}:${PORT}   ← 同学们的 agent 用这个`);
-    console.log('');
-    console.log(`  数据目录     ${PATHS.data}`);
-    console.log(`  网页面板     http://localhost:${PORT}/panel`);
-    console.log(`  Agent 接入   把这句话发给同学的 agent：`);
-    console.log(`               「fetch http://<上面任意地址>/guide 并照做」`);
-    console.log('');
-    console.log('  开户         coagent.exe adduser <id> "显示名" --token <管理员token>');
-    console.log('  关闭服务     直接关掉本窗口（数据已实时落盘）');
-    console.log('');
+  // 优雅关闭：关窗 / Ctrl+C 时先关连接再退
+  let shuttingDown = false;
+  async function shutdown(signal) {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    console.log(`\n  ${C.yellow('收到 ' + signal + '，正在关闭…')}`);
+    await close();
+    process.exit(0);
+  }
+  process.on('SIGINT', () => shutdown('SIGINT'));
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
 
-    const defaultUsers = auth.defaultTokensActive();
-    if (defaultUsers.length) {
-      console.warn(
-        `  ⚠️ 以下账号仍在使用「种子默认 token」：${defaultUsers.join(', ')}\n` +
-        '    任何能连上本 Hub 的人都可冒充管理员，正式使用前请立即轮换：\n' +
-        '    coagent.exe adduser 或 POST /users/:id/rotate\n',
-      );
-    }
-  });
-  // 不注册任何退出钩子：关窗即退，数据全程实时落盘，无丢数据窗口。
+  const actualPort = await listenWithFallback(server, config.PORT);
+
+  const ips = Object.values(os.networkInterfaces())
+    .flat()
+    .filter((n) => n?.family === 'IPv4' && !n.internal)
+    .map((n) => n.address);
+
+  const bootstrap = auth.getBootstrapInfo();
+
+  console.log('');
+  console.log(`  ${C.magenta('╭──────────────────────────────────────────────╮')}`);
+  console.log(`  ${C.magenta('│')}  ${C.bold('CoAgent Hub')} ${C.cyan(HUB_VERSION.padEnd(14))}（单文件版）  ${C.magenta('│')}`);
+  console.log(`  ${C.magenta('╰──────────────────────────────────────────────╯')}`);
+  console.log('');
+  console.log(`  ${C.gray('本机访问')}     ${C.green('http://localhost:' + actualPort)}`);
+  for (const ip of ips) console.log(`  ${C.gray('局域网访问')}   ${C.green('http://' + ip + ':' + actualPort)}   ${C.yellow('← 同学们的 agent 用这个')}`);
+  console.log('');
+  console.log(`  ${C.gray('数据目录')}     ${C.dim(PATHS.data)}`);
+  console.log(`  ${C.gray('网页面板')}     ${C.cyan('http://localhost:' + actualPort + '/panel')}`);
+  console.log(`  ${C.gray('Agent 接入')}   把这句话发给同学的 agent：`);
+  console.log(`               ${C.dim('「fetch http://<上面任意地址>/guide 并照做」')}`);
+  console.log('');
+
+  // 首次启动引导：显示种子管理员 token，降低上手门槛
+  if (bootstrap.firstRun) {
+    console.log(`  ${C.green('╭────────── 首次启动快速开始 ──────────╮')}`);
+    console.log(`  ${C.green('│')}  ${C.bold('管理员账号：')}${C.cyan(bootstrap.adminId)}`);
+    console.log(`  ${C.green('│')}  ${C.bold('接入 Token：')}${C.yellow(bootstrap.adminToken)}`);
+    console.log(`  ${C.green('│')}  面板已自动填充，打开浏览器即可登录`);
+    console.log(`  ${C.green('╰──────────────────────────────────────╯')}`);
+    console.log('');
+  }
+
+  console.log(`  ${C.gray('开户')}         coagent.exe adduser <id> "显示名" --token <管理员token>`);
+  console.log(`  ${C.gray('关闭服务')}     直接关掉本窗口（数据已实时落盘）`);
+  console.log('');
+
+  const defaultUsers = auth.defaultTokensActive();
+  if (defaultUsers.length && !bootstrap.firstRun) {
+    console.warn(
+      `  ${C.red('⚠️ 以下账号仍在使用「种子默认 token」：')}${defaultUsers.join(', ')}\n` +
+      `    ${C.red('任何能连上本 Hub 的人都可冒充管理员，正式使用前请立即轮换：')}\n` +
+      `    ${C.dim('coagent.exe adduser 或 POST /users/:id/rotate')}\n`,
+    );
+  }
+
+  // 自动打开浏览器（首次启动或非 --no-browser）
+  if (!flags.noBrowser) {
+    const panelUrl = `http://localhost:${actualPort}/panel`;
+    setTimeout(() => {
+      try {
+        const { exec } = cp;
+        const cmd = process.platform === 'win32' ? `start "" "${panelUrl}"` :
+          process.platform === 'darwin' ? `open "${panelUrl}"` : `xdg-open "${panelUrl}"`;
+        exec(cmd, { shell: true });
+      } catch { /* 自动开浏览器失败不影响服务 */ }
+    }, 500);
+  }
 }
 
 async function cli(argv) {
@@ -114,7 +190,7 @@ async function cli(argv) {
     if (out) console.log(out);
   } catch (err) {
     if (err instanceof hub.CliError) {
-      console.error(`✗ ${err.message}`);
+      console.error(C.red('✗ ' + err.message));
       process.exitCode = 1;
     } else {
       console.error(err?.stack ?? String(err));

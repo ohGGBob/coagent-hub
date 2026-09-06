@@ -46,7 +46,26 @@ export function createEventLog(file) {
   const listeners = new Set();
   let seq = 0;
 
+  /** 内存 ring buffer：缓存最近 N 条事件，加速 since() 查询（避免每次全量读文件） */
+  const CACHE_SIZE = 1000;
+  /** @type {Event[]} */
+  const cache = [];
+
   repairAndLoad();
+
+  /** 启动时把文件中最后 CACHE_SIZE 条载入缓存 */
+  function warmCache() {
+    const text = fs.readFileSync(file, 'utf8');
+    if (!text) return;
+    const lines = text.split('\n').filter((l) => l.trim());
+    const start = Math.max(0, lines.length - CACHE_SIZE);
+    for (let i = start; i < lines.length; i++) {
+      try {
+        const ev = JSON.parse(lines[i]);
+        if (ev.seq) cache.push(ev);
+      } catch { /* 跳过损坏行 */ }
+    }
+  }
 
   /**
    * 载入已有日志，恢复 seq；若末尾存在半行（进程被杀）则截断修复。
@@ -88,6 +107,7 @@ export function createEventLog(file) {
       console.warn(`[eventlog] 修复半行写入，截断至 ${brokenTail} 字节`);
     }
     seq = maxSeq;
+    warmCache();
   }
 
   /**
@@ -107,6 +127,8 @@ export function createEventLog(file) {
     };
     // 同步追加：单线程下天然串行，且保证"落盘先于响应"
     fs.appendFileSync(file, JSON.stringify(ev) + '\n');
+    cache.push(ev);
+    if (cache.length > CACHE_SIZE) cache.shift();
     for (const fn of listeners) {
       try {
         fn(ev);
@@ -118,12 +140,24 @@ export function createEventLog(file) {
   }
 
   /**
-   * 回放：取 seq > after 的事件。
+   * 回放：取 seq > after 的事件。优先走内存缓存，缓存未命中才读文件。
    * @param {number} after
    * @param {number} [limit]
    * @returns {Event[]}
    */
   function since(after = 0, limit = 500) {
+    // 快速路径：请求范围完全在缓存内（缓存最早 seq <= after+1）
+    if (cache.length && cache[0].seq <= after + 1) {
+      const out = [];
+      for (const ev of cache) {
+        if (ev.seq > after) {
+          out.push(ev);
+          if (out.length >= limit) break;
+        }
+      }
+      return out;
+    }
+    // 慢速路径：读文件
     const text = fs.readFileSync(file, 'utf8');
     /** @type {Event[]} */
     const out = [];

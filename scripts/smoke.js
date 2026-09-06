@@ -163,7 +163,7 @@ try {
     const g = await alice.request('GET', '/guide');
     ok(String(g.raw).includes('# CoAgent Hub') && String(g.raw).includes(hubUrl), '/guide 返回含 Hub 地址的接入指南');
     const p = await alice.request('GET', '/panel');
-    ok(String(p.raw).includes('CoAgent Hub 管理面板') && String(p.raw).includes('viewTasks'), '/panel 返回管理面板 HTML');
+    ok(String(p.raw).includes('CoAgent Hub') && String(p.raw).includes('renderDashboard'), '/panel 返回管理面板 HTML');
   }
 
   // ------------------------------------------------------------ 2. 任务板
@@ -391,7 +391,9 @@ try {
 
   // CLI 内嵌调用（不 spawn 子进程：沙箱环境下子进程网络请求可能被掐）
   const { run: cliRun } = await import('../scripts/hub.mjs');
-  const cli = (args) => cliRun(args);
+  // 剥离 ANSI 颜色码，让断言基于纯文本匹配
+  const stripAnsi = (s) => String(s).replace(/\x1b\[[0-9;]*m/g, '');
+  const cli = async (args) => stripAnsi(await cliRun(args));
 
   const cliWork = path.join(TMP_ROOT, 'cli-work');
   await cli(['init', cliWork, '--hub', hubUrl, '--token', 'tok_alice_0001']);

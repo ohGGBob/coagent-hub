@@ -12,6 +12,7 @@
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
+import { createHash } from 'node:crypto';
 import {
   PATHS, PORT, HUB_VERSION, ROOT, ensureDirs, privateBranch, PROTECTED_BRANCHES,
 } from './config.js';
@@ -19,13 +20,72 @@ import { createEventLog } from './eventlog.js';
 import { createContextStore } from './context.js';
 import { createTaskStore } from './tasks.js';
 import { createReviewStore } from './reviews.js';
-import { loadUsers, verify, requireScope, createUser, listUsersPublic, rotateToken, deleteUser } from './auth.js';
+import { createCommentStore } from './comments.js';
+import { loadUsers, verify, requireScope, createUser, listUsersPublic, rotateToken, deleteUser, getBootstrapInfo } from './auth.js';
 import * as repo from './git-repo.js';
 import { HubError, badRequest, notFound, newUpgradeRequired, forbidden } from './errors.js';
 import { guideMarkdown } from './guide.js';
 import { attachWebSocket } from './ws.js';
 
 const MAX_BODY = 128 * 1024 * 1024;
+
+/** CORS 允许源：默认 *（开发友好），生产可通过 COAGENT_CORS_ORIGIN 限定 */
+const CORS_ORIGIN = process.env.COAGENT_CORS_ORIGIN ?? '*';
+/** 是否打印访问日志：默认开，设 COAGENT_ACCESS_LOG=0 关闭 */
+const ACCESS_LOG = process.env.COAGENT_ACCESS_LOG !== '0';
+/** 速率限制：每 IP 每分钟最多请求数（默认 600，设 0 关闭） */
+const RATE_LIMIT = Number(process.env.COAGENT_RATE_LIMIT ?? 600);
+
+/** 简易令牌桶速率限制（按 IP，每分钟重置） */
+const rateBuckets = new Map();
+function checkRateLimit(ip) {
+  if (RATE_LIMIT <= 0) return true;
+  const now = Date.now();
+  const bucket = rateBuckets.get(ip);
+  if (!bucket || now - bucket.windowStart > 60_000) {
+    rateBuckets.set(ip, { windowStart: now, count: 1 });
+    return true;
+  }
+  bucket.count++;
+  return bucket.count <= RATE_LIMIT;
+}
+// 定期清理过期桶，防止内存泄漏
+setInterval(() => {
+  const now = Date.now();
+  for (const [ip, b] of rateBuckets) {
+    if (now - b.windowStart > 120_000) rateBuckets.delete(ip);
+  }
+}, 60_000).unref();
+
+/** 进程级指标计数（/metrics 用） */
+const metrics = {
+  startedAt: new Date().toISOString(),
+  requests: 0,
+  requestsByStatus: { '2xx': 0, '3xx': 0, '4xx': 0, '5xx': 0 },
+  bytesIn: 0,
+  bytesOut: 0,
+  errors: 0,
+};
+
+/**
+ * 结构化访问日志：一行一条，含方法/路径/状态/耗时/字节。
+ * 生产环境可直接被 Loki / ELK 采集。
+ */
+function accessLog(req, res, start, bytesOut) {
+  if (!ACCESS_LOG) return;
+  const ms = Date.now() - start;
+  const status = res.statusCode;
+  const bucket = status >= 500 ? '5xx' : status >= 400 ? '4xx' : status >= 300 ? '3xx' : '2xx';
+  metrics.requests++;
+  metrics.requestsByStatus[bucket]++;
+  metrics.bytesOut += bytesOut;
+  const ua = String(req.headers['user-agent'] ?? '').slice(0, 60);
+  console.log(
+    `[hub] ${req.method} ${req.url} → ${status} ${ms}ms` +
+    (bytesOut ? ` ${bytesOut}B` : '') +
+    (ua ? `  "${ua}"` : ''),
+  );
+}
 
 /**
  * 组装所有依赖并创建 HTTP 服务。
@@ -53,6 +113,12 @@ export function createHub() {
     },
   });
 
+  // 评论系统（任务评论 + PR 评论）
+  const comments = createCommentStore({
+    eventLog,
+    onTaskComment: (taskId, delta) => tasks.incComment(taskId, delta),
+  });
+
   // 鉴权语义：scope === null 表示公开端点；'@auth' 表示需登录但不校验具体 scope。
   const PUBLIC = null;
   const AUTH_ONLY = '@auth';
@@ -73,6 +139,43 @@ export function createHub() {
     users: loadUsers().map((u) => ({ id: u.id, name: u.name })),
   }));
 
+  // 轻量指标端点（Prometheus 文本格式，可直接被抓取）
+  add('GET', /^\/metrics$/, null, () => {
+    const uptimeSec = Math.floor((Date.now() - new Date(metrics.startedAt).getTime()) / 1000);
+    const lines = [
+      `# HELP coagent_up 1 = Hub 正在运行`,
+      `# TYPE coagent_up gauge`,
+      `coagent_up 1`,
+      `# HELP coagent_version Hub 版本`,
+      `# TYPE coagent_version gauge`,
+      `coagent_version{version="${HUB_VERSION}"} 1`,
+      `# HELP coagent_uptime_seconds 运行时长（秒）`,
+      `# TYPE coagent_uptime_seconds counter`,
+      `coagent_uptime_seconds ${uptimeSec}`,
+      `# HELP coagent_http_requests_total HTTP 请求总数`,
+      `# TYPE coagent_http_requests_total counter`,
+      `coagent_http_requests_total ${metrics.requests}`,
+      `# HELP coagent_http_requests_by_status 按状态码分桶的请求数`,
+      `# TYPE coagent_http_requests_by_status counter`,
+      `coagent_http_requests_by_status{status="2xx"} ${metrics.requestsByStatus['2xx']}`,
+      `coagent_http_requests_by_status{status="4xx"} ${metrics.requestsByStatus['4xx']}`,
+      `coagent_http_requests_by_status{status="5xx"} ${metrics.requestsByStatus['5xx']}`,
+      `# HELP coagent_event_seq 当前事件序号`,
+      `# TYPE coagent_event_seq gauge`,
+      `coagent_event_seq ${eventLog.lastSeq}`,
+      `# HELP coagent_ws_connections 当前 WebSocket 连接数`,
+      `# TYPE coagent_ws_connections gauge`,
+      `coagent_ws_connections ${bus?.count ?? 0}`,
+      `# HELP coagent_users 注册用户数`,
+      `# TYPE coagent_users gauge`,
+      `coagent_users ${loadUsers().length}`,
+      `# HELP coagent_branches 分支数`,
+      `# TYPE coagent_branches gauge`,
+      `coagent_branches ${repo.listBranches().length}`,
+    ];
+    return { raw: Buffer.from(lines.join('\n') + '\n', 'utf8'), contentType: 'text/plain; version=0.0.4; charset=utf-8' };
+  });
+
   add('POST', /^\/auth\/login$/, null, ({ body }) => {
     const { userId, token } = body ?? {};
     const users = loadUsers();
@@ -80,6 +183,9 @@ export function createHub() {
     if (!user) throw new HubError(401, 'UNAUTHORIZED', 'userId / token 不匹配');
     return { userId: user.id, name: user.name, token: user.token, scopes: user.scopes };
   });
+
+  // 首次启动引导：面板据此自动填充种子管理员 token，降低上手门槛
+  add('GET', /^\/auth\/bootstrap$/, null, () => getBootstrapInfo());
 
   // ---------- Agent 自助接入指南（无鉴权：不含任何秘密） ----------
   add('GET', /^\/guide$/, null, ({ req }) => {
@@ -89,8 +195,8 @@ export function createHub() {
   });
 
   // ---------- Web 管理面板（静态页本身无鉴权，数据接口各自鉴权） ----------
-  let panelCache;
-  add('GET', /^\/panel$/, null, () => {
+  let panelCache, panelETag;
+  add('GET', /^\/panel$/, null, ({ req, res }) => {
     if (!panelCache) {
       try {
         // SEA 打包：panel.html 作为内嵌资产随 exe 分发
@@ -98,6 +204,14 @@ export function createHub() {
         if (sea?.getRawAsset) panelCache = Buffer.from(sea.getRawAsset('panel.html'));
       } catch { /* 非 SEA 环境走文件 */ }
       if (!panelCache) panelCache = fs.readFileSync(path.join(ROOT, 'src', 'panel.html'));
+      panelETag = `"${createHash('md5').update(panelCache).digest('hex').slice(0, 16)}"`;
+    }
+    res.setHeader('ETag', panelETag);
+    res.setHeader('Cache-Control', 'public, max-age=300');
+    if (req.headers['if-none-match'] === panelETag) {
+      res.writeHead(304);
+      res.end();
+      return { raw: Buffer.alloc(0), _skip: true };
     }
     return { raw: panelCache, contentType: 'text/html; charset=utf-8' };
   });
@@ -129,6 +243,22 @@ export function createHub() {
   add('DELETE', /^\/users\/([^/]+)$/, 'admin:write', ({ params, user }) => {
     if (dec(params[0]) === user.id) throw forbidden('不能注销自己（会把自己锁在门外）');
     return deleteUser(dec(params[0]));
+  });
+
+  // 数据导出（管理员）：打包所有 JSON 数据为一个 JSON 文件，便于备份迁移
+  add('GET', /^\/admin\/export$/, 'admin:write', () => {
+    const dump = {
+      exportedAt: new Date().toISOString(),
+      version: HUB_VERSION,
+      users: loadUsers(),
+      tasks: readJsonSafe(PATHS.tasks),
+      reviews: readJsonSafe(PATHS.reviews),
+      comments: readJsonSafe(PATHS.comments),
+      context: readJsonlSafe(PATHS.context),
+      events: readJsonlSafe(PATHS.events),
+    };
+    const buf = Buffer.from(JSON.stringify(dump, null, 2), 'utf8');
+    return { raw: buf, contentType: 'application/json; charset=utf-8' };
   });
 
   // ---------- 事件回放 ----------
@@ -189,6 +319,59 @@ export function createHub() {
   add('POST', /^\/tasks\/([^/]+)\/release$/, 'task:write', ({ params, body, user }) => ({
     task: tasks.release(dec(params[0]), user.id, body ?? {}),
   }));
+
+  add('DELETE', /^\/tasks\/([^/]+)$/, 'task:write', ({ params, user }) =>
+    tasks.remove(dec(params[0]), user.id),
+  );
+
+  // ---------- 评论（任务评论 + PR 评论）----------
+  add('GET', /^\/tasks\/([^/]+)\/comments$/, 'task:read', ({ params }) => ({
+    comments: comments.list('task', dec(params[0])),
+  }));
+  add('POST', /^\/tasks\/([^/]+)\/comments$/, 'task:write', ({ params, body, user }) => ({
+    comment: comments.create({ type: 'task', targetId: dec(params[0]), authorId: user.id, body: body?.body }),
+  }));
+  add('GET', /^\/reviews\/([^/]+)\/comments$/, 'review:read', ({ params }) => ({
+    comments: comments.list('review', dec(params[0])),
+  }));
+  add('POST', /^\/reviews\/([^/]+)\/comments$/, 'review:write', ({ params, body, user }) => ({
+    comment: comments.create({ type: 'review', targetId: dec(params[0]), authorId: user.id, body: body?.body }),
+  }));
+  add('DELETE', /^\/comments\/([^/]+)$/, 'context:write', ({ params, user }) =>
+    comments.remove(dec(params[0]), user.id),
+  );
+
+  // ---------- 全局搜索（任务 + 上下文 + 事件）----------
+  add('GET', /^\/search$/, 'events:read', ({ url }) => {
+    const q = url.searchParams.get('q')?.trim();
+    if (!q) throw badRequest('缺少搜索关键词 q');
+    const limit = Number(url.searchParams.get('limit') ?? 20);
+    const taskResults = tasks.list({ q }).slice(0, limit).map((t) => ({
+      kind: 'task', id: t.id, title: t.title, snippet: t.description?.slice(0, 120) ?? '', status: t.status, priority: t.priority,
+    }));
+    const ctxResults = context.query({ q, limit }).map((e) => ({
+      kind: 'context', id: e.id, title: e.title, snippet: e.body?.slice(0, 120) ?? '', type: e.type, authorId: e.authorId,
+    }));
+    return { query: q, tasks: taskResults, context: ctxResults, total: taskResults.length + ctxResults.length };
+  });
+
+  // ---------- 统计（仪表盘用）----------
+  add('GET', /^\/stats$/, 'events:read', () => {
+    const taskStats = tasks.stats();
+    const allBranches = repo.listBranches();
+    const ctxEntries = context.query({ limit: 9999 });
+    const allComments = readJsonlSafe(PATHS.comments);
+    return {
+      tasks: taskStats,
+      context: { total: ctxEntries.length, byType: ctxEntries.reduce((acc, e) => { acc[e.type] = (acc[e.type] ?? 0) + 1; return acc; }, {}) },
+      comments: { total: allComments.filter((c) => !c.deleted).length, byType: allComments.reduce((acc, c) => { if (!c.deleted) acc[c.type] = (acc[c.type] ?? 0) + 1; return acc; }, {}) },
+      branches: { total: allBranches.length, protected: PROTECTED_BRANCHES.length },
+      users: loadUsers().length,
+      lastSeq: eventLog.lastSeq,
+      wsConnections: bus?.count ?? 0,
+      uptime: Math.floor((Date.now() - new Date(metrics.startedAt).getTime()) / 1000),
+    };
+  });
 
   // ---------- 分支（名称含斜杠，后缀优先匹配）----------
   // 整仓读通道：跨机场景下 agent 无法直连本机路径，靠这两个端点取代码
@@ -294,16 +477,40 @@ export function createHub() {
 
   // ---------- 请求分发 ----------
   const server = http.createServer(async (req, res) => {
+    const start = Date.now();
     const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
 
-    // CORS：给未来的上下文策展 UI 留门
-    res.setHeader('Access-Control-Allow-Origin', '*');
+    // CORS：默认 *，生产可通过 COAGENT_CORS_ORIGIN 限定具体源
+    res.setHeader('Access-Control-Allow-Origin', CORS_ORIGIN);
     res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type');
     res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PATCH,DELETE,OPTIONS');
-    if (req.method === 'OPTIONS') return res.writeHead(204).end();
+    res.setHeader('Access-Control-Max-Age', '86400');
+    if (CORS_ORIGIN !== '*') res.setHeader('Vary', 'Origin');
+    if (req.method === 'OPTIONS') {
+      res.writeHead(204);
+      res.end();
+      accessLog(req, res, start, 0);
+      return;
+    }
+
+    // 速率限制（按客户端 IP）
+    const clientIp = req.socket.remoteAddress ?? 'unknown';
+    if (!checkRateLimit(clientIp)) {
+      sendJson(res, 429, { error: { code: 'RATE_LIMITED', message: '请求过于频繁，请稍后再试', limit: RATE_LIMIT + '/min' } });
+      return;
+    }
+
+    let bytesOut = 0;
+    const origEnd = res.end.bind(res);
+    res.end = (chunk, encoding, cb) => {
+      if (chunk) bytesOut += Buffer.isBuffer(chunk) ? chunk.length : Buffer.byteLength(String(chunk), encoding);
+      accessLog(req, res, start, bytesOut);
+      return origEnd(chunk, encoding, cb);
+    };
 
     try {
       const raw = await readBody(req);
+      if (raw.length) metrics.bytesIn += raw.length;
       const path = url.pathname;
       const route = routes.find((r) => r.method === req.method && r.re.test(path));
       if (!route) throw notFound(`无此端点：${req.method} ${path}`);
@@ -337,6 +544,7 @@ export function createHub() {
       sendJson(res, 200, result);
     } catch (err) {
       const status = err instanceof HubError ? err.status : 500;
+      if (status >= 500) metrics.errors++;
       const payload =
         err instanceof HubError
           ? err.toJSON()
@@ -381,7 +589,49 @@ export function createHub() {
     eventLog,
   });
 
-  return { server, eventLog, context, tasks, reviews, bus };
+  /**
+   * 优雅关闭：停止接受新连接，关闭所有 WS 连接，等待现有请求完成。
+   * 供 SIGTERM / SIGINT 处理调用，避免强杀导致数据损坏。
+   * @param {number} [graceMs=5000] 宽限期
+   * @returns {Promise<void>}
+   */
+  function close(graceMs = 5000) {
+    return new Promise((resolve) => {
+      console.log('[hub] 正在优雅关闭…');
+      for (const conn of bus.connections) {
+        try { conn.socket.write?.(Buffer.from([0x88, 0x02, 0x03, 0xe8])); conn.socket.destroy(); } catch { /* 忽略 */ }
+      }
+      const timer = setTimeout(() => {
+        console.warn('[hub] 优雅关闭超时，强制退出');
+        resolve();
+      }, graceMs);
+      server.close(() => {
+        clearTimeout(timer);
+        console.log('[hub] 已关闭');
+        resolve();
+      });
+    });
+  }
+
+  return { server, eventLog, context, tasks, reviews, comments, bus, close, metrics };
+}
+
+/**
+ * 安全读取 JSON 文件，不存在返回空对象
+ */
+function readJsonSafe(file) {
+  try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return {}; }
+}
+
+/**
+ * 安全读取 JSONL 文件，不存在返回空数组
+ */
+function readJsonlSafe(file) {
+  try {
+    return fs.readFileSync(file, 'utf8').split('\n').filter((l) => l.trim()).map((l) => {
+      try { return JSON.parse(l); } catch { return null; }
+    }).filter(Boolean);
+  } catch { return []; }
 }
 
 /**
@@ -390,6 +640,7 @@ export function createHub() {
  * @param {*} payload
  */
 function sendJson(res, status, payload) {
+  if (payload && payload._skip) return; // 304 等已在 handler 中结束响应
   if (payload && payload.raw instanceof Buffer) {
     res.writeHead(status, {
       'Content-Type': payload.contentType ?? 'application/octet-stream',

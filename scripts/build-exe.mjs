@@ -22,6 +22,7 @@ import esbuild from 'esbuild';
 const require = createRequire(import.meta.url);
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const DIST = path.join(ROOT, 'dist');
+const PKG = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
 
 // 1) esbuild 打成单文件 CJS（SEA 只认 CommonJS 入口）
 fs.mkdirSync(DIST, { recursive: true });
@@ -34,10 +35,13 @@ await esbuild.build({
   target: 'node22',
   legalComments: 'none',
   // 让 server.js / hub.mjs 的「直接运行守卫」在 exe 里全体让位，调度权归本入口
-  define: { 'process.env.COAGENT_ENTRY': '"sea"' },
+  define: {
+    'process.env.COAGENT_ENTRY': '"sea"',
+    'process.env.COAGENT_VERSION': `"${PKG.version}"`,
+  },
   minify: false, // 出问题时堆栈可读，比那点体积重要
 });
-console.log('[1/4] esbuild 单文件打包完成 → dist/entry.cjs');
+console.log(`[1/4] esbuild 单文件打包完成 → dist/entry.cjs（v${PKG.version}）`);
 
 // 2) 生成 SEA 资源包
 const seaConfig = path.join(DIST, 'sea-config.json');

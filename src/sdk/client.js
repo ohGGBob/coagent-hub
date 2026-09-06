@@ -150,7 +150,8 @@ export class HubClient {
     list: (filter = {}) => this.request('GET', '/tasks', { query: filter }),
     get: (id) => this.request('GET', `/tasks/${encodeURIComponent(id)}`),
     /**
-     * @param {{title: string, description?: string, tags?: string[], branchId?: string}} input
+     * @param {{title: string, description?: string, tags?: string[], branchId?: string,
+     *          priority?: string, labels?: string[], dueDate?: string}} input
      */
     create: (input) => this.request('POST', '/tasks', { body: input }),
     claim: (id) => this.request('POST', `/tasks/${encodeURIComponent(id)}/claim`),
@@ -160,6 +161,8 @@ export class HubClient {
      * @param {{reviewId?: string}} [opts] 释放他人任务时必须给出 approved 的 reviewId
      */
     release: (id, opts = {}) => this.request('POST', `/tasks/${encodeURIComponent(id)}/release`, { body: opts }),
+    comments: (id) => this.request('GET', `/tasks/${encodeURIComponent(id)}/comments`),
+    addComment: (id, body) => this.request('POST', `/tasks/${encodeURIComponent(id)}/comments`, { body: { body } }),
   };
 
   /** 分支：读直连 git，写必须经 Hub */
@@ -194,7 +197,15 @@ export class HubClient {
     approve: (id) => this.request('POST', `/reviews/${encodeURIComponent(id)}/approve`),
     reject: (id, reason) => this.request('POST', `/reviews/${encodeURIComponent(id)}/reject`, { body: { reason } }),
     merge: (id) => this.request('POST', `/reviews/${encodeURIComponent(id)}/merge`),
+    comments: (id) => this.request('GET', `/reviews/${encodeURIComponent(id)}/comments`),
+    addComment: (id, body) => this.request('POST', `/reviews/${encodeURIComponent(id)}/comments`, { body: { body } }),
   };
+
+  /** 全局搜索（任务 + 上下文） */
+  search = (q, limit = 20) => this.request('GET', '/search', { query: { q, limit } });
+
+  /** 统计指标（仪表盘用） */
+  stats = () => this.request('GET', '/stats');
 
   /**
    * 整仓读通道（跨机场景：agent 无法直连主机文件路径）。

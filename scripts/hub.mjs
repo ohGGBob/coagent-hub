@@ -30,6 +30,30 @@ import { HubClient, connectHubWs } from '../src/sdk/client.js';
 
 const CONFIG_NAME = '.coagent.json';
 
+/* ---------- 零依赖 ANSI 彩色输出（检测 NO_COLOR / 非 TTY 自动降级） ---------- */
+const USE_COLOR = !process.env.NO_COLOR && process.stdout.isTTY !== false;
+const c = (code) => (s) => (USE_COLOR ? `\x1b[${code}m${s}\x1b[0m` : s);
+const color = {
+  reset: c(0),
+  bold: c(1),
+  dim: c(2),
+  red: c(31),
+  green: c(32),
+  yellow: c(33),
+  blue: c(34),
+  magenta: c(35),
+  cyan: c(36),
+  gray: c(90),
+  bgBlue: c(44),
+  bgGreen: c(42),
+};
+const ok = (s) => color.green('✓ ' + s);
+const fail = (s) => color.red('✗ ' + s);
+const warn = (s) => color.yellow('⚠ ' + s);
+const info = (s) => color.cyan('→ ' + s);
+const hr = () => color.gray('─'.repeat(56));
+const shortId = (id) => String(id || '').slice(0, 8);
+
 /** 需要本机 git 的命令（其余命令纯走 HTTP，无 git 也能用） */
 const GIT_NEEDED = new Set(['init', 'pull', 'push', 'status', 'sync']);
 
@@ -84,9 +108,16 @@ function parseArgs(argv) {
   const positional = [];
   for (let i = 1; i < argv.length; i++) {
     const a = argv[i];
+    if (a == null) continue; // 跳过数组空洞 / undefined
     if (a.startsWith('--')) {
-      flags.set(a.slice(2), argv[i + 1]);
-      i++;
+      const next = argv[i + 1];
+      // 下一个元素是另一个 flag 或不存在时，当前 flag 视为布尔标记（值为 true）
+      if (next == null || String(next).startsWith('--')) {
+        flags.set(a.slice(2), 'true');
+      } else {
+        flags.set(a.slice(2), next);
+        i++;
+      }
     } else {
       positional.push(a);
     }
@@ -160,9 +191,11 @@ export async function run(argv) {
         path.join(dir, CONFIG_NAME),
         JSON.stringify({ hubUrl: client.hubUrl, token: client.token, userId: me.userId, branch }, null, 2),
       );
-      log(`✓ 项目已拉到 ${dir}`);
-      log(`✓ 你的私有分支：${branch}`);
-      log('⚠ 注意：token 以明文存在 .coagent.json，别把这个文件提交或外发');
+      log(hr());
+      log(ok(`项目已拉到 ${color.bold(dir)}`));
+      log(ok(`你的私有分支：${color.cyan(branch)}`));
+      log(warn('token 以明文存在 .coagent.json，别把这个文件提交或外发'));
+      log(info('下一步：coagent.exe sync（看任务板）→ 写代码 → coagent.exe push'));
     },
 
     async pull() {
@@ -171,11 +204,11 @@ export async function run(argv) {
       const bundle = await snapshotFile(client);
       g(['fetch', bundle, '+refs/heads/*:refs/remotes/hub/*'], dir);
       fs.rmSync(bundle, { force: true });
-      log('✓ 已同步远端引用：');
+      log(ok('已同步远端引用：'));
       for (const line of g(['for-each-ref', '--format=%(refname:short) %(objectname:short)', 'refs/remotes/hub'], dir)
         .split('\n')
         .filter(Boolean)) {
-        log(`    ${line}`);
+        log(`    ${color.gray(line)}`);
       }
     },
 
@@ -191,8 +224,9 @@ export async function run(argv) {
       fs.rmSync(bundle, { force: true });
 
       const res = await client.branch.push(branch, buf);
-      log(`✓ 已推送 ${res.branch} → ${res.sha.slice(0, 7)}`);
-      log('  想合入 main：用 review 接口发起审核，他人批准后再 merge');
+      log(hr());
+      log(ok(`已推送 ${color.cyan(res.branch)} → ${color.magenta(res.sha.slice(0, 7))}`));
+      log(info('想合入 main：用 review 接口发起审核，他人批准后再 merge'));
     },
 
     async status() {
@@ -203,19 +237,29 @@ export async function run(argv) {
         query: { after: Math.max(0, health.lastSeq - 12) },
       });
 
-      log('\n— 任务板 —');
-      if (!tasks.length) log('  （空）');
-      for (const t of tasks) log(`  [${t.status}] ${t.title}　认领：${t.assignee ?? '—'}`);
+      log(hr());
+      log(color.bold('📋 任务板'));
+      if (!tasks.length) log(color.gray('  （空）'));
+      for (const t of tasks) {
+        const st = t.status === 'done' ? color.green('[完成]') : t.status === 'claimed' ? color.yellow('[进行中]') : color.cyan('[待认领]');
+        log(`  ${st} ${t.title}　${color.gray('认领：' + (t.assignee ?? '—'))}`);
+      }
 
-      log('\n— 最近动态 —');
-      for (const e of events.slice(-12)) log(`  #${e.seq} ${e.type}　${e.authorId}`);
+      log('');
+      log(color.bold('⚡ 最近动态'));
+      for (const e of events.slice(-12)) log(`  ${color.gray('#' + e.seq)} ${color.cyan(e.type)}　${color.gray(e.authorId)}`);
 
       try {
         const d = await client.branch.diff(cfg.branch);
-        log(`\n— 你的分支 ${cfg.branch} — 领先 main ${d.ahead} 个提交，落后 ${d.behind} 个`);
+        log('');
+        log(color.bold(`🌿 你的分支 ${cfg.branch}`));
+        log(`  领先 main ${color.green(d.ahead)} 个提交，落后 ${color.yellow(d.behind)} 个`);
       } catch {
-        log(`\n— 你的分支 ${cfg.branch} 尚未推送到 Hub —`);
+        log('');
+        log(color.bold(`🌿 你的分支 ${cfg.branch}`));
+        log(color.gray('  尚未推送到 Hub'));
       }
+      log(hr());
     },
 
     async sync() {
@@ -235,18 +279,20 @@ export async function run(argv) {
       const client = clientFor(cfg);
       const { user } = await client.users.create({ id, name });
       const url = client.hubUrl;
-      log(`✓ 已开户：${user.id}（${user.name}）`);
+      log(hr());
+      log(ok(`已开户：${color.bold(user.id)}（${user.name}）`));
       log('');
-      log('—— 把下面整段发给这位同学即可 ——');
-      log('┌─────────────────────────────────────────────');
-      log(`│ 1. 到 GitHub Releases 下载 coagent-x64.exe（无需装 Node）`);
-      log(`│ 2. 代码协作：coagent.exe init ./my-work --hub ${url} --token ${user.token}`);
-      log(`│    之后在工作目录里：sync（开工）/ push（交作业）`);
+      log(color.bold('—— 把下面整段发给这位同学即可 ——'));
+      log(color.gray('┌─────────────────────────────────────────────'));
+      log(`│ 1. 到 GitHub Releases 下载 ${color.cyan('coagent-x64.exe')}（无需装 Node）`);
+      log(`│ 2. 代码协作：${color.green('coagent.exe init ./my-work')} --hub ${url} --token ${color.yellow(user.token)}`);
+      log(`│    之后在工作目录里：${color.cyan('sync')}（开工）/ ${color.cyan('push')}（交作业）`);
       log(`│ 3. agent 接入：把这句话发给你的 agent ——`);
       log(`│    「fetch ${url}/guide 并照做」`);
-      log('└─────────────────────────────────────────────');
+      log(color.gray('└─────────────────────────────────────────────'));
       log('');
-      log('⚠ token 只显示这一次，请同学妥善保存；泄露就用 rotate 换新。');
+      log(warn('token 只显示这一次，请同学妥善保存；泄露就用 rotate 换新。'));
+      log(hr());
     },
 
     /** 一句话贴共享笔记（agent 不写代码也能共享上下文） */
@@ -262,7 +308,7 @@ export async function run(argv) {
         taskId: flags.get('task') || undefined,
         tags: flags.get('tags') ? flags.get('tags').split(',') : [],
       });
-      log(`✓ 笔记已上墙：[${entry.type}] ${entry.title}`);
+      log(ok(`笔记已上墙：[${color.cyan(entry.type)}] ${color.bold(entry.title)}`));
     },
 
     /** 一句话建任务 */
@@ -272,8 +318,8 @@ export async function run(argv) {
       const title = positional[0] ?? flags.get('title');
       if (!title) die('用法：task "任务标题" [--body 描述]');
       const { task } = await client.task.create({ title, description: flags.get('body') ?? '' });
-      log(`✓ 任务已创建：${task.id.slice(0, 8)} ${task.title}`);
-      log(`  认领：npm run hub -- claim ${task.id}`);
+      log(ok(`任务已创建：${color.magenta(task.id.slice(0, 8))} ${color.bold(task.title)}`));
+      log(info(`认领：coagent.exe claim ${task.id.slice(0, 8)}`));
     },
 
     /** 认领任务：支持完整 id 或前缀（status 输出的 8 位短 id 就够用） */
@@ -290,16 +336,88 @@ export async function run(argv) {
       id = hits[0].id;
 
       const { task } = await client.task.claim(id);
-      log(`✓ 已认领：${task.title}`);
+      log(ok(`已认领：${color.bold(task.title)}`));
     },
 
     async whoami() {
       const cfg = fs.existsSync(path.join(dir, CONFIG_NAME)) ? loadConfig(dir) : undefined;
       const client = clientFor(cfg);
       const me = await client.me();
-      log(`userId: ${me.userId}`);
-      log(`name:   ${me.name}`);
-      log(`scopes: ${me.scopes.join(', ')}`);
+      log(hr());
+      log(`${color.bold('userId:')} ${color.cyan(me.userId)}`);
+      log(`${color.bold('name:   ')} ${me.name}`);
+      log(`${color.bold('scopes: ')} ${me.scopes.map((s) => s.includes('admin') ? color.red(s) : color.gray(s)).join(', ')}`);
+      log(hr());
+    },
+
+    /** 给任务或 PR 发评论 */
+    async comment() {
+      const cfg = loadConfig(dir);
+      const client = clientFor(cfg);
+      const target = flags.get('task') ?? flags.get('review');
+      const kind = flags.get('task') ? 'task' : 'review';
+      const body = positional[0] ?? flags.get('body');
+      if (!target || !body) die('用法：comment "评论内容" --task <任务id> 或 --review <PR id>');
+      const endpoint = kind === 'task' ? `/tasks/${target}/comments` : `/reviews/${target}/comments`;
+      const { comment } = await client.request('POST', endpoint, { body });
+      log(ok(`评论已发送到 ${kind} ${color.magenta(shortId(target))}`));
+      log(color.gray(`  ${comment.body.slice(0, 80)}`));
+    },
+
+    /** 查看事件历史日志 */
+    async log() {
+      const cfg = loadConfig(dir);
+      const client = clientFor(cfg);
+      const limit = Number(flags.get('limit') ?? 30);
+      const after = Number(flags.get('after') ?? 0);
+      const { events, lastSeq } = await client.request('GET', '/events', { query: { after, limit } });
+      log(hr());
+      log(color.bold(`📜 事件日志（${events.length} 条，lastSeq=${lastSeq}）`));
+      log(hr());
+      for (const e of events) {
+        log(`  ${color.gray('#' + String(e.seq).padStart(4))} ${color.cyan(e.type.padEnd(20))} ${color.gray(e.authorId.padEnd(12))} ${JSON.stringify(e.payload).slice(0, 60)}`);
+      }
+    },
+
+    /** 全局搜索（任务 + 上下文） */
+    async search() {
+      const cfg = loadConfig(dir);
+      const client = clientFor(cfg);
+      const q = positional[0] ?? flags.get('q');
+      if (!q) die('用法：search "关键词"');
+      const r = await client.search(q, Number(flags.get('limit') ?? 10));
+      log(hr());
+      log(color.bold(`🔍 搜索：${q}（共 ${r.total} 条结果）`));
+      log(hr());
+      if (r.tasks?.length) {
+        log(color.bold('\n📋 任务：'));
+        for (const t of r.tasks) log(`  ${color.magenta(shortId(t.id))} [${t.status}/${t.priority}] ${t.title}`);
+      }
+      if (r.context?.length) {
+        log(color.bold('\n💬 上下文：'));
+        for (const c of r.context) log(`  ${color.magenta(shortId(c.id))} [${c.type}] ${c.title} — ${c.authorId}`);
+      }
+      if (!r.tasks?.length && !r.context?.length) log(color.gray('  无匹配结果'));
+    },
+
+    /** 查看分支 diff */
+    async diff() {
+      const cfg = loadConfig(dir);
+      const client = clientFor(cfg);
+      const branch = positional[0] ?? cfg.branch;
+      const base = flags.get('base') ?? 'main';
+      if (!branch) die('用法：diff [分支名] [--base main]');
+      const d = await client.branch.diff(branch, base);
+      log(hr());
+      log(color.bold(`🌿 Diff: ${branch} → ${base}`));
+      log(`  领先 ${color.green(d.ahead)} 个提交，落后 ${color.yellow(d.behind)} 个`);
+      log(hr());
+      if (d.commits?.length) {
+        log(color.bold('\n提交记录：'));
+        for (const c of d.commits) log(`  ${color.magenta(c.sha.slice(0, 7))} ${c.subject}`);
+      }
+      if (d.stat) { log(color.bold('\n变更统计：')); log(color.gray(d.stat)); }
+      if (flags.get('full') && d.patch) { log(color.bold('\n完整 diff：')); log(d.patch); }
     },
 
     /**
@@ -313,17 +431,19 @@ export async function run(argv) {
       const live = flags.get('live') === '1' || flags.get('live') === 'true';
       const since = Number(flags.get('since') ?? 0);
 
-      const printEvent = (ev) => log(`[事件] #${ev.seq} ${ev.type}　${ev.authorId}　${JSON.stringify(ev.payload)}`);
+      const printEvent = (ev) => log(`${color.gray('#' + ev.seq)} ${color.cyan(ev.type)} ${color.gray(ev.authorId)} ${JSON.stringify(ev.payload)}`);
 
-      log(`开始监听（${live ? '实时+轮询' : '轮询'}，间隔 ${Math.round(intervalMs / 1000)}s，Ctrl+C 退出）`);
+      log(hr());
+      log(color.bold(`👁  开始监听（${live ? color.green('实时+轮询') : color.yellow('纯轮询')}，间隔 ${Math.round(intervalMs / 1000)}s，Ctrl+C 退出）`));
+      log(hr());
 
       if (live) {
         connectHubWs({
           hubUrl: client.hubUrl,
           token: client.token,
           since,
-          onEvent: (ev) => (ev.type === 'hello' ? log(`[实时] 已连接，服务端 lastSeq=${ev.lastSeq}`) : printEvent(ev)),
-          onError: (err) => console.error(`[实时] ${err.message}（将自动重连）`),
+          onEvent: (ev) => (ev.type === 'hello' ? log(ok(`实时已连接，服务端 lastSeq=${color.magenta(ev.lastSeq)}`)) : printEvent(ev)),
+          onError: (err) => console.error(color.red(`[实时] ${err.message}（将自动重连）`)),
         });
       }
 
@@ -359,10 +479,14 @@ CoAgent agent 命令行工具
   adduser <id>  开户并打印可转发的接入卡片（需管理员 token）
   note "标题"   一句话上墙共享笔记（--body 正文 --type 类型 --task 任务）
   task "标题"   一句话建任务（--body 描述）／ claim <id> 认领
+  comment "…"   发评论（--task <id> 或 --review <id>）
   pull          拉取全员最新进度
   push          推送本地改动到自己的私有分支
+  diff [branch] 查看分支 diff（--base main --full 显示完整 patch）
   status        任务板 + 最近动态 + 分支差距
   sync          pull + status（推荐每天开工前）
+  log           查看事件历史（--limit 30 --after <seq>）
+  search "关键词" 全局搜索任务和上下文
   watch         常驻监听事件（--interval 30m 定轮询；--live 1 加实时推送）
   whoami        查看当前身份
 
@@ -375,7 +499,7 @@ if (process.env.COAGENT_ENTRY !== 'sea' && process.argv[1] && import.meta.url ==
   run(process.argv.slice(2))
     .then((out) => console.log(out))
     .catch((err) => {
-      console.error(`✗ ${err.message}`);
+      console.error(fail(err.message));
       process.exit(err instanceof CliError ? 1 : 2);
     });
 }
