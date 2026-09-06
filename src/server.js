@@ -198,6 +198,18 @@ export function createHub() {
     return { raw: Buffer.from(md, 'utf8'), contentType: 'text/markdown; charset=utf-8' };
   });
 
+  // ---------- API 文档（无鉴权：仅路由列表，不含秘密） ----------
+  add('GET', /^\/api$/, null, () => {
+    const docs = routes
+      .filter((r) => !r.re.source.includes('\\/panel') && !r.re.source.includes('\\/ws'))
+      .map((r) => ({
+        method: r.method,
+        path: r.re.source.replace(/^\^/, '').replace(/\$$/, ''),
+        auth: r.scope === null ? 'public' : r.scope === '@auth' ? 'login' : r.scope,
+      }));
+    return { version: HUB_VERSION, endpoints: docs, count: docs.length };
+  });
+
   // ---------- Web 管理面板（静态页本身无鉴权，数据接口各自鉴权） ----------
   let panelCache, panelETag;
   add('GET', /^\/panel$/, null, ({ req, res }) => {
@@ -302,6 +314,10 @@ export function createHub() {
     return context.pin(dec(params[0]), user.id, body?.pinned ?? true);
   });
 
+  add('POST', /^\/context\/([^/]+)\/revise$/, 'context:write', ({ params, body, user }) => {
+    return context.revise(dec(params[0]), user.id, { body: body?.body, title: body?.title });
+  });
+
   // ---------- 文件附件 ----------
   add('GET', /^\/files$/, 'context:read', () => ({ files: files.list() }));
 
@@ -342,6 +358,19 @@ export function createHub() {
   }));
 
   add('GET', /^\/tasks\/([^/]+)$/, 'task:read', ({ params }) => ({ task: tasks.get(dec(params[0])) }));
+
+  // 任务活动历史：返回与该任务相关的所有事件（创建/认领/更新/评论/完成等）
+  add('GET', /^\/tasks\/([^/]+)\/activity$/, 'task:read', ({ params }) => {
+    const taskId = dec(params[0]);
+    const all = eventLog.since(0, 10000);
+    const activity = all.filter((ev) =>
+      ev.payload?.taskId === taskId ||
+      ev.payload?.id === taskId ||
+      (ev.type === 'comment.posted' && ev.payload?.targetId === taskId) ||
+      (ev.type === 'comment.posted' && ev.payload?.taskId === taskId),
+    );
+    return { activity };
+  });
 
   add('PATCH', /^\/tasks\/([^/]+)$/, 'task:write', ({ params, body, user }) => ({
     task: tasks.update(dec(params[0]), user.id, body ?? {}),
@@ -402,6 +431,7 @@ export function createHub() {
       comments: { total: allComments.filter((c) => !c.deleted).length, byType: allComments.reduce((acc, c) => { if (!c.deleted) acc[c.type] = (acc[c.type] ?? 0) + 1; return acc; }, {}) },
       branches: { total: allBranches.length, protected: PROTECTED_BRANCHES.length },
       users: loadUsers().length,
+      onlineUsers: bus?.onlineUsers?.() ?? [],
       lastSeq: eventLog.lastSeq,
       wsConnections: bus?.count ?? 0,
       uptime: Math.floor((Date.now() - new Date(metrics.startedAt).getTime()) / 1000),

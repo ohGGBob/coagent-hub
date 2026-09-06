@@ -158,6 +158,14 @@ export function attachWebSocket(server, { verify, eventLog }) {
     get count() {
       return connections.size;
     },
+    /** 当前在线用户 ID 列表（去重） */
+    onlineUsers() {
+      return [...new Set([...connections].map((c) => c.user.id))];
+    },
+    /** 检查某用户是否在线 */
+    isOnline(userId) {
+      return [...connections].some((c) => c.user.id === userId);
+    },
     connections,
   };
 }

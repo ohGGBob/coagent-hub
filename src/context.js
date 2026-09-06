@@ -190,12 +190,17 @@ export function createContextStore({ file = PATHS.context, eventLog }) {
     for (const p of all.filter((r) => r.kind === 'pin')) {
       pinState.set(p.targetId, p.pinned);
     }
+    // 解析 revision 标记：取每个目标的最新修订
+    const revisions = new Map();
+    for (const r of all.filter((r) => r.kind === 'revision')) {
+      revisions.set(r.targetId, r); // 后面的覆盖前面的（JSONL 按时间追加）
+    }
     const since = filter.since ? Date.parse(filter.since) : NaN;
     const q = filter.q?.trim();
     const tags = filter.tags;
 
     let entries = all
-      .filter((e) => e.kind !== 'retract' && e.kind !== 'pin')
+      .filter((e) => e.kind !== 'retract' && e.kind !== 'pin' && e.kind !== 'revision')
       .filter((e) => (filter.includeRetracted ? true : !retracted.has(e.id)))
       .filter((e) => (filter.taskId ? e.taskId === filter.taskId : true))
       .filter((e) => (filter.authorId ? e.authorId === filter.authorId : true))
@@ -207,6 +212,15 @@ export function createContextStore({ file = PATHS.context, eventLog }) {
     // 应用 pin 标记（覆盖条目自身的 pinned 字段）
     for (const e of entries) {
       if (pinState.has(e.id)) e.pinned = pinState.get(e.id);
+    }
+    // 应用最新修订（覆盖 body/title）
+    for (const e of entries) {
+      const rev = revisions.get(e.id);
+      if (rev) {
+        if (rev.body !== undefined) e.body = rev.body;
+        if (rev.title !== undefined) e.title = rev.title;
+        e.revisedAt = rev.ts;
+      }
     }
     if (filter.pinned !== undefined) {
       entries = entries.filter((e) => !!e.pinned === filter.pinned);
@@ -223,7 +237,7 @@ export function createContextStore({ file = PATHS.context, eventLog }) {
     const limit = filter.limit ?? 500;
     const sorted = entries.sort((a, b) => {
       if (!!b.pinned !== !!a.pinned) return (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0);
-      return a.createdAt.localeCompare(b.createdAt);
+      return (a.createdAt || '').localeCompare(b.createdAt || '');
     });
     return sorted.slice(-limit);
   }
@@ -270,14 +284,45 @@ export function createContextStore({ file = PATHS.context, eventLog }) {
   }
 
   /**
+   * 追加修订：不可变原则下，通过追加 revision 标记来更新条目内容。
+   * 查询时自动解析为最新修订版本。
+   * @param {string} id
+   * @param {string} userId
+   * @param {{body?: string, title?: string}} patch
+   */
+  function revise(id, userId, patch) {
+    const target = get(id);
+    if (target.authorId !== userId) {
+      throw forbidden('只能修订自己发布的上下文', { owner: target.authorId });
+    }
+    if (!patch.body && !patch.title) throw badRequest('修订内容不能为空');
+    const marker = {
+      kind: 'revision',
+      id: randomUUID(),
+      targetId: id,
+      authorId: userId,
+      body: patch.body ?? undefined,
+      title: patch.title ?? undefined,
+      ts: new Date().toISOString(),
+    };
+    appendLine(marker);
+    eventLog.append({
+      type: 'context.revised',
+      authorId: userId,
+      payload: { id, targetId: id, fields: Object.keys(patch) },
+    });
+    return { id, revised: true };
+  }
+
+  /**
    * @param {string} id
    * @returns {ContextEntry}
    */
   function get(id) {
-    const found = readAll().find((e) => e.kind !== 'retract' && e.kind !== 'pin' && e.id === id);
+    const found = readAll().find((e) => e.kind !== 'retract' && e.kind !== 'pin' && e.kind !== 'revision' && e.id === id);
     if (!found) throw notFound(`上下文条目不存在：${id}`);
     return found;
   }
 
-  return { append, query, retract, pin, get };
+  return { append, query, retract, pin, revise, get };
 }

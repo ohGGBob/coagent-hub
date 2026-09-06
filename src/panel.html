@@ -502,6 +502,7 @@ tr:hover td { background: var(--bg-hover); }
       </div>
       <div class="spacer"></div>
       <div class="status-pill"><div class="dot" id="ws-dot"></div><span id="ws-status">连接中…</span></div>
+      <div class="status-pill" id="online-pill" title="在线用户"><span style="color:var(--ok)">●</span> <span id="online-count">0</span> 在线</div>
       <div class="status-pill"><span id="seq-display">seq 0</span></div>
       <button class="icon-btn" onclick="toggleNotif()" title="通知">🔔<span class="notif-dot" id="notif-dot" style="display:none"></span></button>
       <button class="icon-btn" onclick="toggleTheme()" title="切换主题">🌓</button>
@@ -530,6 +531,19 @@ let ME = null, HEALTH = null, PAGE = 'dashboard', WS = null;
 let WS_RECONNECT = 0, POLL_TIMER = null, LAST_SEQ = 0;
 let CACHE = { tasks: [], context: [], reviews: [], branches: [], users: [], events: [], stats: null };
 let UNREAD_COUNT = 0;
+let DESKTOP_NOTIF = localStorage.getItem('coagent_desktop_notif') === '1';
+
+/** 请求桌面通知权限并显示通知 */
+async function enableDesktopNotif() {
+  if (!('Notification' in window)) { toast('浏览器不支持桌面通知', 'err'); return; }
+  const perm = await Notification.requestPermission();
+  if (perm === 'granted') { DESKTOP_NOTIF = true; localStorage.setItem('coagent_desktop_notif', '1'); toast('桌面通知已开启', 'ok'); }
+  else toast('通知权限被拒绝', 'err');
+}
+function showDesktopNotif(title, body) {
+  if (!DESKTOP_NOTIF || !('Notification' in window) || Notification.permission !== 'granted') return;
+  try { new Notification(title, { body, icon: 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">👑</text></svg>' }); } catch { /* 忽略 */ }
+}
 
 /* ---------- 工具 ---------- */
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -690,7 +704,22 @@ function connectWS() {
   WS.onmessage = (ev) => {
     let msg; try { msg = JSON.parse(ev.data); } catch { return; }
     if (msg.type === 'hello') { LAST_SEQ = msg.lastSeq || LAST_SEQ; updateSeq(); return; }
-    if (msg.seq) { LAST_SEQ = Math.max(LAST_SEQ, msg.seq); updateSeq(); UNREAD_COUNT++; updateNotifDot(); }
+    if (msg.seq) {
+      LAST_SEQ = Math.max(LAST_SEQ, msg.seq);
+      updateSeq();
+      UNREAD_COUNT++;
+      updateNotifDot();
+      // 桌面通知：仅对重要事件
+      if (DESKTOP_NOTIF && document.visibilityState !== 'visible') {
+        const notifMap = {
+          'task.created': '新任务', 'task.claimed': '任务被认领',
+          'context.appended': '新上下文', 'review.requested': '新 PR 审核',
+          'review.approved': 'PR 已批准', 'comment.posted': '新评论',
+          'branch.pushed': '代码推送', 'message.posted': '新消息',
+        };
+        if (notifMap[msg.type]) showDesktopNotif(notifMap[msg.type], msg.payload?.title || msg.payload?.text || msg.payload?.branch || '');
+      }
+    }
     if (PAGE === 'activity' || PAGE === 'dashboard') renderCurrent();
     updateBadges();
   };
@@ -711,6 +740,7 @@ async function refreshAll() {
     HEALTH = h; LAST_SEQ = h.lastSeq; updateSeq();
     CACHE.tasks = tasks.tasks; CACHE.context = ctx.entries; CACHE.reviews = rev.reviews;
     CACHE.branches = br.branches; CACHE.stats = stats;
+    if (stats.onlineUsers) $('online-count').textContent = stats.onlineUsers.length;
     updateBadges(); renderCurrent();
   } catch (e) { if (String(e.message).includes('401')) logout(); }
 }
@@ -821,6 +851,8 @@ let DRAG_TASK_ID = null;
 let CTX_Q = '', CTX_TYPE = '';
 let CTX_PENDING_FILES = []; // 待上传的文件 {file, meta?}
 let TASK_PRIORITY = '';
+let BATCH_MODE = false;
+let BATCH_SELECTED = new Set();
 function renderTasks() {
   let tasks = CACHE.tasks;
   if (TASK_PRIORITY) tasks = tasks.filter((t) => t.priority === TASK_PRIORITY);
@@ -847,6 +879,14 @@ function renderTasks() {
           <option value="">全部</option><option value="urgent">紧急</option>
           <option value="high">高</option><option value="medium">中</option><option value="low">低</option>
         </select>
+        <button class="btn ghost sm" onclick="toggleBatchMode()">${BATCH_MODE ? '✓ 退出批量' : '☐ 批量操作'}</button>
+        ${BATCH_MODE && BATCH_SELECTED.size > 0 ? `
+          <span style="font-size:12px;color:var(--accent)">已选 ${BATCH_SELECTED.size} 项</span>
+          <button class="btn sm" onclick="batchAction('done')">✓ 批量完成</button>
+          <button class="btn ghost sm" onclick="batchAction('priority','high')">⬆ 高优先级</button>
+          <button class="btn danger sm" onclick="batchAction('delete')">🗑 批量删除</button>
+          <button class="btn ghost sm" onclick="BATCH_SELECTED.clear();renderTasks()">清除选择</button>
+        ` : ''}
         <span style="font-size:12px;color:var(--text-mute);margin-left:auto">共 ${CACHE.tasks.length} 个任务</span>
       </div>
     </div>
@@ -870,7 +910,10 @@ function renderTasks() {
 function emptyCol(text) { return `<div class="empty"><div class="text">${text}</div></div>`; }
 function taskCardHTML(t) {
   const overdue = t.dueDate && t.status !== 'done' && Date.parse(t.dueDate) < Date.now();
-  return `<div class="task-card" draggable="true" ondragstart="DRAG_TASK_ID='${t.id}';this.classList.add('dragging')" ondragend="this.classList.remove('dragging')">
+  const checked = BATCH_SELECTED.has(t.id);
+  return `<div class="task-card" draggable="${!BATCH_MODE}" ondragstart="${BATCH_MODE ? '' : `DRAG_TASK_ID='${t.id}';this.classList.add('dragging')`}" ondragend="this.classList.remove('dragging')">
+    ${BATCH_MODE ? `<div style="margin-bottom:6px"><label style="cursor:pointer;display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-sub)">
+      <input type="checkbox" ${checked ? 'checked' : ''} onchange="toggleTaskSelect('${t.id}', this.checked)"> 选择</label></div>` : ''}
     <div class="t-top">
       <span class="chip ${t.priority || 'medium'}">${PRIORITY_LABELS[t.priority] || '中'}</span>
       ${(t.labels || []).slice(0, 3).map((l) => `<span class="chip purple">${esc(l)}</span>`).join('')}
@@ -911,12 +954,32 @@ function createTask() {
 }
 function claimTask(id) { api('POST', `/tasks/${id}/claim`).then(() => { toast('已认领', 'ok'); refreshAll(); }).catch((e) => toast('✗ ' + e.message, 'err')); }
 function doneTask(id) { api('PATCH', `/tasks/${id}`, { status: 'done' }).then(() => { toast('已标记完成', 'ok'); refreshAll(); }).catch((e) => toast('✗ ' + e.message, 'err')); }
+function toggleBatchMode() { BATCH_MODE = !BATCH_MODE; BATCH_SELECTED.clear(); renderTasks(); }
+function toggleTaskSelect(id, checked) { if (checked) BATCH_SELECTED.add(id); else BATCH_SELECTED.delete(id); renderTasks(); }
+async function batchAction(action, value) {
+  if (!BATCH_SELECTED.size) return toast('未选择任务', 'err');
+  if (action === 'delete' && !confirm(`确定删除选中的 ${BATCH_SELECTED.size} 个任务？`)) return;
+  let ok = 0, fail = 0;
+  for (const id of BATCH_SELECTED) {
+    try {
+      if (action === 'done') await api('PATCH', `/tasks/${id}`, { status: 'done' });
+      else if (action === 'priority') await api('PATCH', `/tasks/${id}`, { priority: value });
+      else if (action === 'delete') await api('DELETE', `/tasks/${id}`);
+      ok++;
+    } catch { fail++; }
+  }
+  toast(`批量操作完成：成功 ${ok}，失败 ${fail}`, fail ? 'err' : 'ok');
+  BATCH_SELECTED.clear();
+  BATCH_MODE = false;
+  refreshAll();
+}
 
 /* ---------- 任务详情模态 ---------- */
 async function openTaskDetail(id) {
   try {
     const task = CACHE.tasks.find((t) => t.id === id) || (await api('GET', `/tasks/${id}`)).task;
     const { comments } = await api('GET', `/tasks/${id}/comments`);
+    const { activity } = await api('GET', `/tasks/${id}/activity`);
     showModal(`
       <h3>📋 ${esc(task.title)}</h3>
       <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">
@@ -926,22 +989,40 @@ async function openTaskDetail(id) {
         ${task.dueDate ? `<span class="chip">📅 ${task.dueDate.slice(0,10)}</span>` : ''}
         ${(task.labels || []).map((l) => `<span class="chip purple">${esc(l)}</span>`).join('')}
       </div>
-      <div class="card" style="margin-bottom:12px">
+      <div style="display:flex;gap:8px;margin-bottom:12px;border-bottom:1px solid var(--border);padding-bottom:8px">
+        <button class="btn ghost sm" onclick="switchTaskTab('desc')" id="tab-desc">📝 描述</button>
+        <button class="btn ghost sm" onclick="switchTaskTab('comments')" id="tab-comments">💬 评论 (${comments.filter((c) => !c.deleted).length})</button>
+        <button class="btn ghost sm" onclick="switchTaskTab('activity')" id="tab-activity">⚡ 活动 (${activity.length})</button>
+      </div>
+      <div id="task-tab-desc" class="card" style="margin-bottom:12px">
         <div class="card-title">描述</div>
         ${task.description ? renderMarkdown(task.description) : '<span style="color:var(--text-mute)">无描述</span>'}
       </div>
-      <div class="card-title">💬 评论 (${comments.filter((c) => !c.deleted).length})</div>
-      <div id="task-comments">${comments.map(commentHTML).join('') || '<div class="empty"><div class="text">还没有评论</div></div>'}</div>
-      <div class="form-row" style="margin-top:12px">
-        <textarea class="textarea" id="comment-input" placeholder="写下评论（支持 Markdown）…" style="min-height:50px"></textarea>
+      <div id="task-tab-comments" style="display:none">
+        <div class="card-title">💬 评论</div>
+        <div id="task-comments">${comments.map(commentHTML).join('') || '<div class="empty"><div class="text">还没有评论</div></div>'}</div>
+        <div class="form-row" style="margin-top:12px">
+          <textarea class="textarea" id="comment-input" placeholder="写下评论（支持 Markdown）…" style="min-height:50px"></textarea>
+        </div>
+      </div>
+      <div id="task-tab-activity" style="display:none">
+        <div class="card-title">⚡ 活动历史</div>
+        ${activity.length ? `<div class="timeline">${activity.slice().reverse().map(eventTimelineItem).join('')}</div>` : '<div class="empty"><div class="text">暂无活动记录</div></div>'}
       </div>
       <div class="actions">
         <button class="btn danger" onclick="deleteTask('${id}')" style="margin-right:auto">🗑 删除</button>
         <button class="btn ghost" onclick="closeModal()">关闭</button>
-        <button class="btn" onclick="postTaskComment('${id}')">发送评论</button>
+        <button class="btn" id="task-comment-btn" onclick="postTaskComment('${id}')">发送评论</button>
       </div>
     `, 'large');
   } catch (e) { toast('✗ ' + e.message, 'err'); }
+}
+function switchTaskTab(tab) {
+  ['desc', 'comments', 'activity'].forEach((t) => {
+    $('task-tab-' + t).style.display = t === tab ? '' : 'none';
+    $('tab-' + t).classList.toggle('active', t === tab);
+  });
+  $('task-comment-btn').style.display = tab === 'comments' ? '' : 'none';
 }
 async function deleteTask(id) {
   if (!confirm('确定删除此任务？此操作不可撤销。')) return;
@@ -1018,6 +1099,7 @@ function renderContext() {
           ${e.tags && e.tags.length ? `<span>#${esc(e.tags.join(' #'))}</span>` : ''}
           ${e.source && e.source !== 'manual' ? `<span class="chip">${esc(e.source)}</span>` : ''}
           ${e.authorId === ME.userId ? `
+            <button class="btn ghost sm" onclick="reviseCtx('${e.id}', '${esc(e.title).replace(/'/g, "\\'")}', '${esc(e.body).replace(/'/g, "\\'").replace(/\n/g, '\\n')}')">✏️ 修订</button>
             <button class="btn ghost sm" onclick="pinCtx('${e.id}', ${!e.pinned})">${e.pinned ? '取消置顶' : '📌 置顶'}</button>
             <button class="btn ghost sm" onclick="retractCtx('${e.id}')">撤回</button>
           ` : ''}
@@ -1077,6 +1159,11 @@ async function uploadFile(file) {
 }
 function retractCtx(id) { if (!confirm('确定撤回？软删除，留痕。')) return; api('POST', `/context/${id}/retract`).then(() => { toast('已撤回', 'ok'); refreshAll(); }).catch((e) => toast('✗ ' + e.message, 'err')); }
 function pinCtx(id, pinned) { api('POST', `/context/${id}/pin`, { pinned }).then(() => { toast(pinned ? '已置顶' : '已取消置顶', 'ok'); refreshAll(); }).catch((e) => toast('✗ ' + e.message, 'err')); }
+function reviseCtx(id, oldTitle, oldBody) {
+  const newBody = prompt('修订正文（Markdown）：', oldBody);
+  if (newBody === null) return;
+  api('POST', `/context/${id}/revise`, { body: newBody }).then(() => { toast('已修订', 'ok'); refreshAll(); }).catch((e) => toast('✗ ' + e.message, 'err'));
+}
 
 /* ============================================================
    审核 / PR（含评论）
@@ -1297,9 +1384,12 @@ function renderSettings() {
       <p style="font-size:12px;color:var(--text-sub);margin-bottom:10px">导出全部数据（用户/任务/评论/上下文/事件）为 JSON 备份文件，需管理员权限。</p>
       <button class="btn ghost" onclick="exportData()">💾 导出数据备份</button>
     </div>
-    <div class="card"><div class="card-title">外观</div>
-      <button class="btn ghost" onclick="toggleTheme()">🌓 切换深色 / 浅色主题</button>
-      <p style="font-size:12px;color:var(--text-mute);margin-top:8px">快捷键：<span class="kbd-hint">Ctrl+K</span> 命令面板 · <span class="kbd-hint">N</span> 新任务 · <span class="kbd-hint">/</span> 搜索</p>
+    <div class="card"><div class="card-title">外观与通知</div>
+      <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+        <button class="btn ghost" onclick="toggleTheme()">🌓 切换深色 / 浅色主题</button>
+        <button class="btn ghost" onclick="enableDesktopNotif()">🔔 ${DESKTOP_NOTIF ? '桌面通知已开启' : '开启桌面通知'}</button>
+      </div>
+      <p style="font-size:12px;color:var(--text-mute);margin-top:8px">桌面通知仅在面板不可见时触发，避免打扰。快捷键：<span class="kbd-hint">Ctrl+K</span> 命令面板 · <span class="kbd-hint">N</span> 新任务 · <span class="kbd-hint">/</span> 搜索</p>
     </div>`;
 }
 async function exportData() {
