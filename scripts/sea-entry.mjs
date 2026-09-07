@@ -21,6 +21,7 @@ import path from 'node:path';
 import { openAppWindow, createDesktopShortcut, isHubAlreadyRunning, extractAppIcon } from './app-window.mjs';
 import { readLauncherState, saveLauncherState, runLauncher } from './launcher.mjs';
 import { registerInstall, unregisterInstall } from './install-reg.mjs';
+import { cleanupOldBinary } from '../src/update.js';
 
 /* 零依赖 ANSI 彩色（SEA 环境下 stdout 通常是 TTY） */
 const USE_COLOR = !process.env.NO_COLOR && process.stdout.isTTY !== false;
@@ -207,6 +208,9 @@ async function serve(argv) {
 
   // 记住「主机」角色（主页面据此渲染状态）
   saveLauncherState(config.PATHS.launcherState, { mode: 'host' });
+
+  // 清理上次自更新留下的回滚备份（新进程已稳定运行）
+  cleanupOldBinary(process.execPath);
 
   // SEA exe：注册到 Windows「设置 → 应用」，支持从系统里卸载
   if (process.env.COAGENT_ENTRY === 'sea') {

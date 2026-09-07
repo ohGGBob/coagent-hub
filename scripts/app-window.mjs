@@ -79,6 +79,22 @@ export function createDesktopShortcut({ name, target, args = '', workingDir = ''
 }
 
 /**
+ * 以分离进程拉起新的 Hub 服务（自更新接管用）。
+ * 参数为常量（serve --no-browser），新进程自己完成单实例检测与数据目录继承。
+ * @param {string} exePath
+ * @returns {boolean}
+ */
+export function spawnDetachedServe(exePath) {
+  try {
+    const child = cp.spawn(exePath, ['serve', '--no-browser'], { detached: true, stdio: 'ignore', env: process.env });
+    child.unref();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * 把 SEA 内嵌的 icon.ico 释放到 exe 同目录（桌面快捷方式的图标来源）。
  * 非 SEA 环境或已存在时不做任何事。
  * @returns {string} ico 文件路径（失败返回空串）

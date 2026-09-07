@@ -504,6 +504,10 @@ try {
     await rejects(() => alice.context.append({ title: 't', body: 'x'.repeat(100_001) }), 400, '超长 context body 被拒');
     await rejects(() => alice.request('POST', '/messages', { body: { text: 'x'.repeat(10_001) } }), 400, '超长消息被拒');
     await rejects(() => bob.task.addComment(vt.id, 'x'.repeat(10_001)), 400, '超长评论被拒');
+
+    // /update/check：源码模式下返回结构化状态且 supported=false
+    const upd = await alice.request('GET', '/update/check');
+    ok(upd.current === '0.12.0' && upd.supported === false && typeof upd.available === 'boolean', '/update/check 返回版本与支持状态（源码模式）');
   }
 
   // ------------------------------------------------------------ 13. 收尾一致性

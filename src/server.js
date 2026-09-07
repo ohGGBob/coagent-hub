@@ -24,6 +24,7 @@ import { createCommentStore } from './comments.js';
 import { createFileStore } from './files.js';
 import { createVectorStore } from './vectors.js';
 import { probeEmbedder, embed, embedOne, embedStatus, embedConfig } from './embed.js';
+import { checkLatest, applyUpdate } from './update.js';
 import { loadUsers, verify, requireScope, createUser, listUsersPublic, rotateToken, deleteUser, getBootstrapInfo, authenticate } from './auth.js';
 import * as repo from './git-repo.js';
 import { HubError, badRequest, notFound, newUpgradeRequired, forbidden } from './errors.js';
@@ -318,6 +319,31 @@ export function createHub() {
       close().then(() => process.exit(0)).catch(() => process.exit(0));
     }, 300);
     return { ok: true, message: '服务正在退出…' };
+  });
+
+  // ---------- 软件更新（微信式：检查 → 一键自替换重启） ----------
+  add('GET', /^\/update\/check$/, AUTH_ONLY, () => checkLatest(HUB_VERSION));
+
+  add('POST', /^\/update\/apply$/, 'admin:write', ({ req }) => {
+    // 仅限主机本机操作（局域网成员不能远程更新主机）
+    const ip = req.socket?.remoteAddress ?? '';
+    const loopback = ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1';
+    if (!loopback) throw forbidden('更新仅允许在主机本机操作');
+    return applyUpdate(HUB_VERSION).then((result) => {
+      // 新二进制已落位：拉起新进程接管端口，本进程优雅退出
+      setTimeout(async () => {
+        try {
+          const { spawnDetachedServe } = await import('../scripts/app-window.mjs');
+          spawnDetachedServe(result.newBinary);
+          await close();
+          process.exit(0);
+        } catch (err) {
+          console.error('[update] 重启新进程失败：', err);
+          process.exit(1);
+        }
+      }, 500);
+      return { restarting: true, version: result.version, macNote: result.macNote };
+    });
   });
 
   // ---------- 事件回放 ----------
