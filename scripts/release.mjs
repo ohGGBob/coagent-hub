@@ -10,6 +10,7 @@
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const version = process.argv[2];
 if (!version || !/^\d+\.\d+\.\d+$/.test(version)) {
@@ -18,7 +19,8 @@ if (!version || !/^\d+\.\d+\.\d+$/.test(version)) {
 }
 const TAG = 'v' + version;
 const REPO = 'ohGGBob/coagent-hub';
-const DIST = path.resolve(path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Z]:)/, '$1')), '..', 'dist');
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const DIST = path.join(ROOT, 'dist');
 
 const cred = spawnSync('git', ['credential', 'fill'], { input: 'protocol=https\nhost=github.com\n\n', encoding: 'utf8' });
 const token = (cred.stdout.match(/password=(.+)/) || [])[1]?.trim();
@@ -26,7 +28,7 @@ if (!token) { console.error('✗ 未找到本机 github.com 凭证'); process.ex
 const headers = { Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json', 'User-Agent': 'coagent-hub' };
 
 // 从 CHANGELOG 提取该版本段落作为说明
-const changelog = fs.readFileSync(path.join(DIST, '..', 'CHANGELOG.md'), 'utf8');
+const changelog = fs.readFileSync(path.join(ROOT, 'CHANGELOG.md'), 'utf8');
 const head = changelog.indexOf(`## [${version}]`);
 const next = changelog.indexOf('\n## [', head + 1);
 if (head < 0) { console.error(`✗ CHANGELOG 中没有 ${version} 的条目`); process.exit(1); }
@@ -64,7 +66,8 @@ const have = new Set();
   for (const a of j.assets ?? []) have.add(a.name);
 }
 
-// 上传走 curl multipart（Node fetch 的分块传输会被边缘节点判 Bad Size）
+// 上传走 curl multipart（Node fetch 的分块传输会被边缘节点判 Bad Size）。
+// cwd 设为 DIST、用纯 ASCII 相对文件名——绝对路径含中文时 Windows curl 读不到文件
 for (const [name] of assets) {
   if (have.has(name)) { console.log(`跳过 ${name}（已上传）`); continue; }
   const file = path.join(DIST, name);
@@ -73,8 +76,8 @@ for (const [name] of assets) {
   const r = spawnSync('curl', ['-sS', '-X', 'POST',
     '-H', `Authorization: Bearer ${token}`,
     '-H', 'Accept: application/vnd.github+json',
-    '-F', `file=@${file}`,
-    `${uploadBase}?name=${name}`], { encoding: 'utf8', timeout: 600_000 });
+    '-F', `file=@${name}`,
+    `${uploadBase}?name=${name}`], { encoding: 'utf8', timeout: 600_000, cwd: DIST });
   let ok = false;
   try { const j = JSON.parse(r.stdout); ok = !!j.name && j.size > 0; } catch { /* 解析失败 */ }
   console.log(ok ? '✓' : '✗ ' + (r.stdout || r.stderr || '').slice(0, 150));
