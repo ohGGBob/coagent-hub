@@ -29,8 +29,14 @@ export const SCOPES = Object.freeze([
   'admin:write',
 ]);
 
-/** 普通 agent 默认 scope：不含管理权限（开户时默认发放） */
-const AGENT_SCOPES = SCOPES.filter((s) => s !== 'admin:write');
+/**
+ * 普通 agent 默认 scope。
+ * 不含 admin:write（开户），也不含 branch:merge（合入受保护分支）——
+ * 后者是「审核闸门」的最后一道，默认人手一份的话，
+ * 任意两个普通身份互相 approve + merge 就能把代码送进 main，闸门等于没有。
+ * 需要合入权限的成员由管理员显式追加该 scope。
+ */
+const AGENT_SCOPES = SCOPES.filter((s) => s !== 'admin:write' && s !== 'branch:merge');
 /** 管理员 scope：全量（种子账号 bootstrap 用，显式授权亦可） */
 const ADMIN_SCOPES = [...SCOPES];
 
@@ -56,7 +62,12 @@ let _usersCache = null;
 let _usersCacheMtime = 0;
 
 /**
- * 加载用户表；文件不存在则写入种子。带内存缓存，文件未变时直接返回。
+ * 加载用户表；文件不存在（首次启动）则写入种子。带内存缓存，文件未变时直接返回。
+ *
+ * 重要：只有「文件根本不存在」才允许写种子。
+ * 文件存在但损坏 / 为空时**绝不覆盖**——那会把全组人的凭证抹掉，
+ * 且种子 token 写死在公开源码里，等于把管理员权限拱手送人。
+ * 这类情况一律抛错，由上层引导走「本机应急重置」。
  * @returns {User[]}
  */
 export function loadUsers() {
@@ -64,16 +75,54 @@ export function loadUsers() {
     const st = fs.statSync(PATHS.users);
     if (_usersCache && st.mtimeMs === _usersCacheMtime) return _usersCache;
     const users = readJson(PATHS.users, []);
+    // 空表 = 全员 401，而修复所需的 admin 接口也要登录 → 死锁，必须当异常抛出
+    if (!Array.isArray(users) || users.length === 0) {
+      throw new Error('用户表为空');
+    }
     _usersCache = users;
     _usersCacheMtime = st.mtimeMs;
     return users;
-  } catch {
-    // 文件不存在：写入种子
+  } catch (err) {
+    if (fs.existsSync(PATHS.users)) {
+      throw new Error(`用户表不可用：${err.message}（原文件已保留，未做任何修改）`);
+    }
+    // 确实没有这个文件才初始化种子
     writeJson(PATHS.users, SEED_USERS);
     _usersCache = structuredClone(SEED_USERS);
     try { _usersCacheMtime = fs.statSync(PATHS.users).mtimeMs; } catch { _usersCacheMtime = 0; }
     return _usersCache;
   }
+}
+
+/** 上次 loadUsers 的失败原因；正常时为 null。供 /auth/bootstrap 上报健康状态。 */
+let _usersError = null;
+export function getUsersError() { return _usersError; }
+export function setUsersError(msg) { _usersError = msg; }
+
+/**
+ * 本机应急重置：把损坏/空的用户表备份后重建为种子管理员，返回新凭证。
+ *
+ * 仅在能物理接触主机的场景下调用（路由层强制 loopback）——
+ * 能摸到这台机器的人本来就改得了 data 目录，所以不额外扩大攻击面；
+ * 但它把「手工翻 JSON」变成一条命令，避免死锁时只能弃库重来。
+ * @returns {{backedUpTo: string|null, user: {id: string, name: string, token: string}}}
+ */
+export function emergencyReset() {
+  let backedUpTo = null;
+  if (fs.existsSync(PATHS.users)) {
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    backedUpTo = `${PATHS.users}.corrupt-${stamp}`;
+    try { fs.copyFileSync(PATHS.users, backedUpTo); } catch { backedUpTo = null; }
+  }
+  const seeded = structuredClone(SEED_USERS);
+  writeJson(PATHS.users, seeded);
+  invalidateCache();
+  _usersError = null;
+  const admin = seeded[0];
+  return {
+    backedUpTo,
+    user: { id: admin.id, name: admin.name, token: admin.token },
+  };
 }
 
 /** 使缓存失效（写操作后调用） */

@@ -124,9 +124,13 @@ async function startHost() {
   const el = document.getElementById('host-msg');
   el.className = 'msg ok'; el.textContent = '正在启动…';
   try {
-    const { url } = await post('/launcher/host');
+    // token 由本进程的 startHost 回调直接给出（不经 HTTP 传输）；
+    // 用 URL fragment 带进面板，fragment 不会进服务器日志，也不留在浏览器历史。
+    const { url, token } = await post('/launcher/host');
     el.textContent = '✓ 已启动，正在进入面板…';
-    setTimeout(() => { location.href = url + '/panel'; }, 600);
+    setTimeout(() => {
+      location.href = url + '/panel' + (token ? '#token=' + encodeURIComponent(token) : '');
+    }, 600);
   } catch (e) { el.className = 'msg err'; el.textContent = '✗ ' + e.message; }
 }
 function enterJoined() { location.href = ${JSON.stringify(joined ? `${state.hub}/panel#token=${encodeURIComponent(state.token || '')}` : '')} || '/launcher'; }
@@ -239,7 +243,7 @@ function readBody(req) {
 /**
  * 启动主页面服务（仅绑定 127.0.0.1）并弹出应用窗口。
  * 「启动 Hub」通过 opts.startHost 回调在本进程内拉起完整 Hub（由 sea-entry 注入，避免循环引用）。
- * @param {{version: string, stateFile: string, startHost: () => Promise<{url: string}>}} opts
+ * @param {{version: string, stateFile: string, startHost: () => Promise<{url: string, token?: string|null}>}} opts
  */
 export async function runLauncher(opts) {
   const server = http.createServer(async (req, res) => {
@@ -259,12 +263,12 @@ export async function runLauncher(opts) {
       }
       if (req.method === 'POST' && req.url === '/launcher/host') {
         saveLauncherState(opts.stateFile, { mode: 'host' });
-        const { url } = await opts.startHost(); // 回调由 sea-entry 注入（避免循环引用）
+        const { url, token } = await opts.startHost(); // 回调由 sea-entry 注入（避免循环引用）
         // SEA exe 环境下创建桌面快捷方式（源码模式 execPath 是 node，跳过）
         const shortcut = process.env.COAGENT_ENTRY === 'sea'
           ? createDesktopShortcut({ name: 'CoAgent Hub', target: process.execPath, workingDir: path.dirname(process.execPath) })
           : false;
-        return send(200, JSON.stringify({ ok: true, url, shortcut }));
+        return send(200, JSON.stringify({ ok: true, url, token: token ?? null, shortcut }));
       }
       if (req.method === 'POST' && req.url === '/launcher/join') {
         const body = JSON.parse((await readBody(req)) || '{}');

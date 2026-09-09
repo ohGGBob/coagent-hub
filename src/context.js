@@ -171,9 +171,13 @@ export function createContextStore({ eventLog, vectors, embedOne, embedModel }) 
     if (!VALID_TYPES.has(type)) {
       throw badRequest(`type 必须是 ${[...VALID_TYPES].join(' | ')}`, { got: type });
     }
-    if (!input.title || !input.title.trim()) throw badRequest('title 不能为空');
-    if (input.title.length > MAX_TITLE) throw badRequest(`title 最长 ${MAX_TITLE} 字符`);
-    if (input.body && input.body.length > MAX_BODY) throw badRequest(`body 最长 ${MAX_BODY} 字符`);
+    // 先归一成字符串：传数字进来时 `title.trim()` 会 TypeError 变成 500，
+    // 而这只是一条本该被 400 拒绝的坏请求。
+    const title = typeof input.title === 'string' ? input.title : String(input.title ?? '');
+    const body = input.body == null ? '' : String(input.body);
+    if (!title.trim()) throw badRequest('title 不能为空');
+    if (title.length > MAX_TITLE) throw badRequest(`title 最长 ${MAX_TITLE} 字符`);
+    if (body.length > MAX_BODY) throw badRequest(`body 最长 ${MAX_BODY} 字符`);
     if (input.tags !== undefined && !Array.isArray(input.tags)) throw badRequest('tags 必须是字符串数组');
     const tags = (input.tags ?? []).map((t) => String(t).trim()).filter(Boolean);
     if (tags.length > MAX_TAGS) throw badRequest(`tags 最多 ${MAX_TAGS} 个`);
@@ -186,8 +190,8 @@ export function createContextStore({ eventLog, vectors, embedOne, embedModel }) 
       id: randomUUID(),
       authorId: input.authorId,
       type,
-      title: input.title.trim(),
-      body: input.body ?? '',
+      title: title.trim(),
+      body,
       tags,
       attachments: input.attachments ?? [],
       metadata: input.metadata ?? {},
@@ -312,12 +316,16 @@ export function createContextStore({ eventLog, vectors, embedOne, embedModel }) 
     }
 
     // 默认：置顶优先，然后按时间正序（回放友好）
+    // 注意不能简单地 sort 后 slice(-limit)：置顶项排在最前，会最先被尾部截取丢掉，
+    // 置顶就失去意义了。这里先分组再分配名额，保证置顶一定留得下。
     const limit = filter.limit ?? 500;
-    const sorted = entries.sort((a, b) => {
-      if (!!b.pinned !== !!a.pinned) return (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0);
-      return (a.createdAt || '').localeCompare(b.createdAt || '');
-    });
-    return sorted.slice(-limit);
+    const byTime = (a, b) => (a.createdAt || '').localeCompare(b.createdAt || '');
+    const pinned = entries.filter((e) => e.pinned).sort(byTime);
+    const normal = entries.filter((e) => !e.pinned).sort(byTime);
+    const keepPinned = pinned.slice(-limit);
+    const rest = limit - keepPinned.length;
+    const keepNormal = rest > 0 ? normal.slice(-rest) : [];
+    return [...keepPinned, ...keepNormal];
   }
 
   /**

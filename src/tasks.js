@@ -127,9 +127,13 @@ export function createTaskStore({ eventLog, getReview }) {
    * @returns {Task}
    */
   function create(input) {
-    if (!input.title?.trim()) throw badRequest('任务 title 不能为空');
-    if (input.title.length > MAX_TITLE) throw badRequest(`title 最长 ${MAX_TITLE} 字符`);
-    if (input.description && input.description.length > MAX_DESCRIPTION) {
+    // 统一收口成字符串再校验：传数字 / 布尔 / 对象进来时，
+    // `title.trim()` 会直接 TypeError 变成 500，而它本该是一条 400。
+    const title = typeof input.title === 'string' ? input.title : String(input.title ?? '');
+    const description = input.description == null ? '' : String(input.description);
+    if (!title.trim()) throw badRequest('任务 title 不能为空');
+    if (title.length > MAX_TITLE) throw badRequest(`title 最长 ${MAX_TITLE} 字符`);
+    if (description.length > MAX_DESCRIPTION) {
       throw badRequest(`description 最长 ${MAX_DESCRIPTION} 字符`);
     }
     const priority = input.priority ?? 'medium';
@@ -142,8 +146,8 @@ export function createTaskStore({ eventLog, getReview }) {
     /** @type {Task} */
     const task = {
       id: randomUUID(),
-      title: input.title.trim(),
-      description: input.description ?? '',
+      title: title.trim(),
+      description,
       status: 'open',
       assignee: null,
       createdBy: input.userId,
@@ -176,6 +180,8 @@ export function createTaskStore({ eventLog, getReview }) {
     const state = load();
     const task = state[id];
     if (!task) throw notFound(`任务不存在：${id}`);
+    // 已完成的任务不该再被认领：否则任务板会把交付过的活重新拉回进行中
+    if (task.status === 'done') throw conflict('任务已完成，无需再认领');
     if (task.assignee && task.assignee !== userId) {
       throw conflict(`任务已被 ${task.assignee} 认领，释放需走审核`, { assignee: task.assignee });
     }

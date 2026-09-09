@@ -25,7 +25,7 @@ import { createFileStore } from './files.js';
 import { createVectorStore } from './vectors.js';
 import { probeEmbedder, embed, embedOne, embedStatus, embedConfig } from './embed.js';
 import { checkLatest, applyUpdate } from './update.js';
-import { loadUsers, verify, requireScope, createUser, listUsersPublic, rotateToken, deleteUser, getBootstrapInfo, authenticate } from './auth.js';
+import { loadUsers, verify, requireScope, createUser, listUsersPublic, rotateToken, deleteUser, getBootstrapInfo, authenticate, emergencyReset } from './auth.js';
 import * as repo from './git-repo.js';
 import { HubError, badRequest, notFound, newUpgradeRequired, forbidden } from './errors.js';
 import { guideMarkdown } from './guide.js';
@@ -171,7 +171,8 @@ export function createHub() {
   }));
 
   // 轻量指标端点（Prometheus 文本格式，可直接被抓取）
-  add('GET', /^\/metrics$/, null, () => {
+  // 需登录：它会暴露用户数 / 分支数 / 事件序号等内部拓扑，不该对匿名访客开放
+  add('GET', /^\/metrics$/, AUTH_ONLY, () => {
     const uptimeSec = Math.floor((Date.now() - new Date(metrics.startedAt).getTime()) / 1000);
     const lines = [
       `# HELP coagent_up 1 = Hub 正在运行`,
@@ -223,6 +224,16 @@ export function createHub() {
     return getBootstrapInfo();
   });
 
+  // 本机应急重置：token 全丢或用户表损坏时，物理接触主机的人可自助恢复。
+  // 仅限回环访问——能摸到这台机器的人本来就改得了 data 目录，不额外扩大攻击面，
+  // 但把「手工翻 JSON」变成一次点击，避免整组人被锁在门外。
+  add('POST', /^\/auth\/emergency-reset$/, null, ({ req }) => {
+    const ip = req.socket?.remoteAddress ?? '';
+    const isLoopback = ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1';
+    if (!isLoopback) throw forbidden('应急重置仅允许在主机本机操作');
+    return emergencyReset();
+  });
+
   // ---------- Agent 自助接入指南（无鉴权：不含任何秘密） ----------
   add('GET', /^\/guide$/, null, ({ req }) => {
     const host = req.headers.host ?? `localhost:${PORT}`;
@@ -256,6 +267,14 @@ export function createHub() {
     }
     res.setHeader('ETag', panelETag);
     res.setHeader('Cache-Control', 'public, max-age=300');
+    // 面板是单文件内联脚本，CSP 必须放行 unsafe-inline；
+    // 但仍锁死 object-src / base-uri / frame-ancestors，堵掉点击劫持与插件类注入。
+    res.setHeader(
+      'Content-Security-Policy',
+      "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline';" +
+      " img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' ws: wss:;" +
+      " object-src 'none'; base-uri 'none'; frame-ancestors 'none'",
+    );
     if (req.headers['if-none-match'] === panelETag) {
       res.writeHead(304);
       res.end();
@@ -399,7 +418,10 @@ export function createHub() {
 
   add('GET', /^\/files\/([^/]+)$/, 'context:read', ({ params, res }) => {
     const { meta, data } = files.read(dec(params[0]));
-    res.setHeader('Content-Disposition', `inline; filename="${encodeURIComponent(meta.filename)}"`);
+    // 一律以附件下载，绝不在 Hub 同源上下文里 inline 渲染用户上传的内容；
+    // 再加一层 sandbox CSP 兜底：即便将来 MIME 判断出错，浏览器也不会把它当活动文档执行。
+    res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(meta.filename)}"`);
+    res.setHeader('Content-Security-Policy', "default-src 'none'; sandbox");
     return { raw: data, contentType: meta.mimeType };
   });
 
@@ -631,6 +653,11 @@ export function createHub() {
   const server = http.createServer(async (req, res) => {
     const start = Date.now();
     const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
+
+    // 基础安全响应头（所有响应统一施加）
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('X-Frame-Options', 'DENY');
+    res.setHeader('Referrer-Policy', 'no-referrer');
 
     // CORS：默认 *，生产可通过 COAGENT_CORS_ORIGIN 限定具体源
     res.setHeader('Access-Control-Allow-Origin', CORS_ORIGIN);

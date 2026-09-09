@@ -19,6 +19,9 @@ const DEAD_AFTER_MS = 60_000;
 const MAX_FRAME_SIZE = 1024 * 1024;
 /** agent.status payload 的字节上限（会原样落进事件日志） */
 const MAX_STATUS_PAYLOAD = 8192;
+/** agent.status 频率限制：单连接每窗口最多上报条数 */
+const STATUS_MAX_PER_WINDOW = 30;
+const STATUS_WINDOW_MS = 60_000;
 
 /**
  * 把 WebSocket 总线挂到 HTTP 服务上（处理 Upgrade 请求）。
@@ -90,6 +93,10 @@ export function attachWebSocket(server, { verify, requireScope, eventLog }) {
     const conn = { socket, user, filter: { types, taskId }, alive: Date.now() };
     connections.add(conn);
 
+    // 本连接 agent.status 上报的令牌桶窗口
+    let statusCount = 0;
+    let statusWindowStart = Date.now();
+
     const send = (opcode, payload) => {
       if (socket.destroyed) return;
       socket.write(encodeFrame(opcode, payload));
@@ -131,6 +138,20 @@ export function attachWebSocket(server, { verify, requireScope, eventLog }) {
             if (JSON.stringify(payload).length > MAX_STATUS_PAYLOAD) {
               return sendJson({ type: 'error', message: `agent.status payload 过大（上限 ${MAX_STATUS_PAYLOAD} 字节）` });
             }
+            // 频率限制：events:read 是默认 scope，不限流的话任何人都能
+            // 无限追加事件（同步落盘 + 向全体广播），把日志和带宽一起拖垮。
+            const now = Date.now();
+            if (now - statusWindowStart > STATUS_WINDOW_MS) {
+              statusWindowStart = now;
+              statusCount = 0;
+            }
+            if (statusCount >= STATUS_MAX_PER_WINDOW) {
+              return sendJson({
+                type: 'error',
+                message: `agent.status 过于频繁（每 ${STATUS_WINDOW_MS / 1000} 秒最多 ${STATUS_MAX_PER_WINDOW} 条）`,
+              });
+            }
+            statusCount++;
             const ev = eventLog.append({ type: 'agent.status', authorId: user.id, payload });
             return sendJson(ev);
           }

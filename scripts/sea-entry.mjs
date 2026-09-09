@@ -22,6 +22,7 @@ import { openAppWindow, createDesktopShortcut, isHubAlreadyRunning, extractAppIc
 import { readLauncherState, saveLauncherState, runLauncher } from './launcher.mjs';
 import { registerInstall, unregisterInstall } from './install-reg.mjs';
 import { cleanupOldBinary } from '../src/update.js';
+import { loadUsers } from '../src/auth.js';
 
 /* 零依赖 ANSI 彩色（SEA 环境下 stdout 通常是 TTY） */
 const USE_COLOR = !process.env.NO_COLOR && process.stdout.isTTY !== false;
@@ -362,7 +363,15 @@ async function main() {
       startHost: async () => {
         // --no-browser：主页面自己会导航进面板，避免弹两个窗口
         const r = await serve(['--no-browser']);
-        return { url: `http://localhost:${r.port}` };
+        // 主页面与 Hub 同进程同机：管理员 token 直接从内存里取，
+        // 既不走 HTTP、也不进访问日志，主页面再用 URL fragment 带进面板自动登录。
+        // 拿不到就返回 null，面板照常显示登录页（不阻断启动）。
+        let token = null;
+        try {
+          const admin = loadUsers().find((u) => (u.scopes ?? []).includes('admin:write'));
+          token = admin?.token ?? null;
+        } catch { /* 用户表异常时降级为手动登录 */ }
+        return { url: `http://localhost:${r.port}`, token };
       },
     });
     return;

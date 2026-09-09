@@ -22,6 +22,44 @@ import { notFound, badRequest, forbidden } from './errors.js';
 const MAX_FILE_SIZE = Number(process.env.COAGENT_MAX_FILE_MB ?? 50) * 1024 * 1024;
 
 /**
+ * 允许存储的 MIME 白名单。
+ *
+ * 上传时的 Content-Type 完全由客户端控制，若原样存下来并在下载时原样回写，
+ * 就等于给了一个存储型 XSS 通道：传 text/html + 一段脚本，
+ * 别人在面板里点开即以同源身份执行（sessionStorage 里的 token 直接被拿走）。
+ * 因此这里只放行不可能被浏览器当活动文档执行的类型，其余一律降级为
+ * application/octet-stream 并以附件形式下载。
+ */
+const SAFE_MIME = new Set([
+  'application/octet-stream',
+  'application/json',
+  'application/pdf',
+  'application/zip',
+  'application/gzip',
+  'application/x-tar',
+  'application/msword',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  'text/plain',
+  'text/markdown',
+  'text/csv',
+  'image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/bmp', 'image/x-icon',
+  'audio/mpeg', 'audio/wav', 'audio/ogg',
+  'video/mp4', 'video/webm',
+]);
+
+/**
+ * 把客户端声明的 MIME 收敛到白名单内。
+ * @param {string} [declared]
+ * @returns {string}
+ */
+function sanitizeMime(declared) {
+  const raw = String(declared ?? '').split(';')[0].trim().toLowerCase();
+  return SAFE_MIME.has(raw) ? raw : 'application/octet-stream';
+}
+
+/**
  * @typedef {object} FileMeta
  * @property {string} id          UUID
  * @property {string} filename    原始文件名
@@ -93,7 +131,7 @@ export function createFileStore() {
       filename: String(filename || 'file').slice(0, 255),
       storedName,
       size: buffer.length,
-      mimeType: mimeType || 'application/octet-stream',
+      mimeType: sanitizeMime(mimeType),
       uploadedBy,
       createdAt: new Date().toISOString(),
     };
