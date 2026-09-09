@@ -103,12 +103,13 @@ export function branchExists(name) {
 }
 
 /**
- * 分支名格式校验：只允许字母数字 / . _ -，且不允许以 '-' 开头（防被当成 git 选项）。
+ * 分支名格式校验：只允许字母数字 / . _ -，且不允许以 '-' 开头（防被当成 git 选项）、
+ * 不允许 '..'（ref 越权）与空路径段（'//' 或尾部 '/'）。
  * 所有「名字来自 HTTP 请求」的分支读写都应先过这道闸。
  * @param {string} name
  */
 export function validateBranchName(name) {
-  if (!/^[A-Za-z0-9][A-Za-z0-9._/-]*$/.test(name) || name.includes('..')) {
+  if (!/^[A-Za-z0-9][A-Za-z0-9._/-]*$/.test(name) || name.includes('..') || name.includes('//') || name.endsWith('/')) {
     throw badRequest('分支名含非法字符', { branch: name });
   }
   return name;

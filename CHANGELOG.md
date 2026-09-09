@@ -3,6 +3,46 @@
 所有重要变更记录在此文件。格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [0.12.1] — 2026-09-09
+
+### 安全修复（来源：BUG排查报告-2026-09-08.md，10 项实证验证）
+
+**P0**
+- **存储型 XSS（P0-1）**：文件上传 MIME 收敛至白名单（`text/html` 等活动文档类型一律降级
+  octet-stream）；下载强制 `Content-Disposition: attachment` + `sandbox` CSP；
+  全站补 `X-Content-Type-Options: nosniff` / `X-Frame-Options` / `Referrer-Policy`，
+  面板页加 CSP（锁 object-src/base-uri/frame-ancestors）
+- **用户表损坏被种子覆盖（P0-2）**：`users.json` 损坏时绝不写种子——原文件保留并抛错，
+  新增 `POST /auth/emergency-reset`（仅回环）本机应急重置，备份后重建凭证
+- **用户表为空全员 401 死锁（P0-3）**：空表同样视为异常走保护路径，配合应急重置解除死锁
+
+**P1**
+- 非字符串 `title`/`body`/`description` 触发 500 → 入口统一归一成字符串（P1-1）
+- WS `agent.status` 无限流可灌爆事件日志 → 单连接每分钟 30 条令牌桶（P1-2）
+- 已完成（done）任务仍可被认领 → `claim()` 拒绝 done 状态（P1-3）
+- 普通 agent 默认持有 `branch:merge`，审核闸门形同虚设 → 默认 scope 移除，仅显式授权（P1-4）
+- `/metrics` 无鉴权暴露内部拓扑 → 改为需登录（P1-5）
+- 置顶上下文在小 limit 下被尾部截取丢弃 → 置顶单独保额，剩余名额给普通条目（P1-6）
+- 主页面启动 Hub 后自动登录：管理员 token 经 URL fragment 传递，不经 HTTP/日志
+
+### 安全加固
+- **自更新校验和验证（fail-closed）**：下载更新包后强制对照 Release 附带的 `checksums.txt`
+  校验 SHA-256，清单缺失 / 无对应条目 / 哈希不匹配一律拒绝替换并删除下载文件——
+  封死「下载损坏」与「Release 资产被篡改」两条路径
+- **发布侧配套**：`release.mjs` 上传前自动生成三产物 SHA-256 清单并一并上传
+- **分支名校验收紧**：拒绝空路径段（`a//b`、尾部 `dev/`），与 git ref 规则对齐
+
+### 修复
+- 自更新下载/校验失败后 `applying` 标志不复位，导致后续更新被「已有更新正在进行」永久锁死
+
+### 测试
+- 新增零依赖单元测试（node:test，36 项断言）：`npm test`
+  - `auth`：token 校验 / 双因子登录 / scope / 用户管理 / 损坏用户表绝不覆盖
+  - `git-repo`：分支名 git option 注入与 ref 越权、私有分支精确匹配、裸仓初始化幂等
+  - `update`：版本比较 / 校验和解析与 fail-closed / 源码模式拒绝自更新
+  - `files`：MIME 白名单收敛（防存储型 XSS）/ 路径安全 / 大小上限 / 删除权限
+  - `jsonfile`：原子写 / 损坏检测 / fallback 深拷贝隔离
+
 ## [0.12.0] — 2026-09-06
 
 ### 新增（微信式在线更新）

@@ -5,9 +5,12 @@
  *  - tag 自动在当前 main HEAD 打（v<版本>）
  *  - 说明文稿从 CHANGELOG.md 提取对应版本的段落
  *  - 产物：dist/coagent-win-x64.exe、dist/coagent-macos-arm64.zip、dist/coagent-macos-x64.zip
+ *  - 上传前自动生成 dist/checksums.txt（三产物 SHA-256），一并上传——
+ *    自更新（src/update.js）下载更新包后会对照该清单校验，缺失即拒绝更新
  *  - 凭证取自本机 git credential；上传走 multipart（国内边缘节点要求）
  */
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -39,7 +42,20 @@ const assets = [
   ['coagent-win-x64.exe', 'application/octet-stream'],
   ['coagent-macos-arm64.zip', 'application/zip'],
   ['coagent-macos-x64.zip', 'application/zip'],
+  ['checksums.txt', 'text/plain'],
 ];
+
+// 生成校验和清单：三个平台产物各一行（sha256sum 格式，update.js 会解析校验）
+{
+  const lines = [];
+  for (const name of assets.slice(0, 3).map(([n]) => n)) {
+    const file = path.join(DIST, name);
+    if (!fs.existsSync(file)) { console.error(`✗ 缺少产物：${file}`); process.exit(1); }
+    lines.push(createHash('sha256').update(fs.readFileSync(file)).digest('hex') + '  ' + name);
+  }
+  fs.writeFileSync(path.join(DIST, 'checksums.txt'), lines.join('\n') + '\n');
+  console.log('✓ 已生成 checksums.txt');
+}
 
 // 已存在则补传
 const exist = await fetch(`https://api.github.com/repos/${REPO}/releases/tags/${TAG}`, { headers });

@@ -13,6 +13,8 @@
  *  - 更新包文件名来自代码内固定白名单（不含任何 HTTP 输入）；
  *  - 版本号必须通过严格格式校验后才参与任何路径/URL 拼接；
  *  - 所有动态路径统一 resolve() + 根目录边界校验；
+ *  - 下载完成后对照 Release 附带的 checksums.txt 校验 SHA-256，
+ *    清单缺失或哈希不匹配一律拒绝替换（fail-closed，防下载损坏与投毒）；
  *  - 本模块为纯文件操作，不做任何子进程调用（新进程由 scripts/app-window.mjs 拉起）。
  *
  * @module update
@@ -21,6 +23,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import zlib from 'node:zlib';
+import { createHash, timingSafeEqual } from 'node:crypto';
 import { PATHS } from './config.js';
 
 const REPO = 'ohGGBob/coagent-hub';
@@ -109,6 +112,63 @@ function assetName() {
       : k === 'macos-x64' ? 'coagent-macos-x64.zip' : null;
 }
 
+/** 校验和清单文件名（与 release.mjs 生成上传的保持一致） */
+const CHECKSUM_FILE = 'checksums.txt';
+/** 校验和清单体积上限（3 行哈希 + 余量，远超即为异常） */
+const MAX_MANIFEST_BYTES = 64 * 1024;
+
+/** 计算文件 SHA-256（hex 小写） */
+export function sha256File(file) {
+  return createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+}
+
+/**
+ * 解析 sha256sum 格式清单：`<hex>  <name>`（双/单空格或 `*` 二进制标记均可）。
+ * 非法行静默跳过；同名以后一行覆盖前一行（与 sha256sum -c 语义一致）。
+ * @param {string} text
+ * @returns {Map<string, string>} name → hex(64)
+ */
+export function parseChecksumsManifest(text) {
+  const map = new Map();
+  for (const line of String(text ?? '').split(/\r?\n/)) {
+    const m = /^([0-9a-fA-F]{64})\s+\*?(.+)$/.exec(line.trim());
+    if (m) map.set(m[2].trim(), m[1].toLowerCase());
+  }
+  return map;
+}
+
+/**
+ * 校验已下载的更新包与清单一致；不匹配时删除文件并抛错（fail-closed）。
+ * @param {string} filePath 下载到本地的更新包
+ * @param {string} manifestText checksums.txt 内容
+ * @param {string} name 期望的资产名（固定白名单内的文件名）
+ */
+export function verifyChecksum(filePath, manifestText, name) {
+  const expected = parseChecksumsManifest(manifestText).get(name);
+  if (!expected) throw new Error(`校验和清单中没有 ${name} 的条目，拒绝更新`);
+  const a = Buffer.from(sha256File(filePath), 'hex');
+  const b = Buffer.from(expected, 'hex');
+  if (a.length !== b.length || !timingSafeEqual(a, b)) {
+    try { fs.rmSync(filePath, { force: true }); } catch { /* 清理失败不影响主流程 */ }
+    throw new Error('更新包 SHA-256 校验失败（下载损坏或被篡改），已删除并拒绝更新');
+  }
+}
+
+/** 下载小体积文本资源（带超时与体积上限） */
+async function downloadText(url) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), DOWNLOAD_TIMEOUT_MS);
+  try {
+    const res = await fetch(url, { signal: ctrl.signal });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const buf = Buffer.from(await res.arrayBuffer());
+    if (buf.length > MAX_MANIFEST_BYTES) throw new Error(`清单超过 ${MAX_MANIFEST_BYTES} 字节`);
+    return buf.toString('utf8');
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /** 下载更新包到固定工作目录，返回本地文件路径（含边界校验） */
 async function downloadAsset(url, name) {
   // 名称必须命中固定白名单（唯一来源是 assetName()，不含任何外部输入）
@@ -185,43 +245,59 @@ export async function applyUpdate(currentVersion) {
   if (!check.available || !check.latest) throw new Error(check.offline ? '检查更新失败（网络不可达）' : '已是最新版本');
   applying = true;
 
-  const asset = assetName();
-  const url = `https://github.com/${REPO}/releases/download/v${check.latest}/${asset}`;
-  const downloaded = await downloadAsset(url, asset);
-  const exePath = process.execPath;
-  let macNote = false;
+  try {
+    const asset = assetName();
+    const base = `https://github.com/${REPO}/releases/download/v${check.latest}`;
+    const downloaded = await downloadAsset(`${base}/${asset}`, asset);
 
-  if (process.platform === 'win32') {
-    // 运行中的 exe 可改名：当前 → .old（回滚备份），新版落位
-    fs.renameSync(exePath, exePath + '.old');
+    // 校验和验证（fail-closed）：清单缺失 / 无对应条目 / 哈希不匹配一律拒绝替换。
+    // 这是防「下载损坏」与「Release 资产被篡改」的最后一道闸，不可降级跳过。
+    let manifest;
     try {
-      fs.copyFileSync(downloaded, exePath);
+      manifest = await downloadText(`${base}/${CHECKSUM_FILE}`);
     } catch (err) {
-      fs.renameSync(exePath + '.old', exePath); // 回滚
-      throw new Error('新版落位失败：' + err.message);
+      throw new Error(`校验和清单获取失败，拒绝更新：${err.message}`);
     }
-  } else if (process.platform === 'darwin') {
-    const target = path.resolve(UPDATE_DIR, 'CoAgent.new');
-    if (!inUpdateDir(target)) throw new Error('非法的解压路径');
-    extractZipEntry(downloaded, 'CoAgent.app/Contents/MacOS/CoAgent', target);
-    fs.chmodSync(target, 0o755);
-    fs.renameSync(exePath, exePath + '.old');
-    try {
-      fs.copyFileSync(target, exePath);
-      fs.chmodSync(exePath, 0o755);
-    } catch (err) {
-      fs.renameSync(exePath + '.old', exePath);
-      throw new Error('新版落位失败：' + err.message);
+    verifyChecksum(downloaded, manifest, asset);
+
+    const exePath = process.execPath;
+    let macNote = false;
+
+    if (process.platform === 'win32') {
+      // 运行中的 exe 可改名：当前 → .old（回滚备份），新版落位
+      fs.renameSync(exePath, exePath + '.old');
+      try {
+        fs.copyFileSync(downloaded, exePath);
+      } catch (err) {
+        fs.renameSync(exePath + '.old', exePath); // 回滚
+        throw new Error('新版落位失败：' + err.message);
+      }
+    } else if (process.platform === 'darwin') {
+      const target = path.resolve(UPDATE_DIR, 'CoAgent.new');
+      if (!inUpdateDir(target)) throw new Error('非法的解压路径');
+      extractZipEntry(downloaded, 'CoAgent.app/Contents/MacOS/CoAgent', target);
+      fs.chmodSync(target, 0o755);
+      fs.renameSync(exePath, exePath + '.old');
+      try {
+        fs.copyFileSync(target, exePath);
+        fs.chmodSync(exePath, 0o755);
+      } catch (err) {
+        fs.renameSync(exePath + '.old', exePath);
+        throw new Error('新版落位失败：' + err.message);
+      }
+      macNote = true; // 签名失效，首次打开需重跑一次签名命令（同首次安装）
+    } else {
+      throw new Error('暂不支持的平台');
     }
-    macNote = true; // 签名失效，首次打开需重跑一次签名命令（同首次安装）
-  } else {
-    throw new Error('暂不支持的平台');
+
+    // 清理下载残留（延迟执行，避免文件占用）
+    setTimeout(() => { try { fs.rmSync(UPDATE_DIR, { recursive: true, force: true }); } catch { /* 忽略 */ } }, 5000).unref();
+
+    return { replacing: true, newBinary: exePath, version: check.latest, macNote };
+  } catch (err) {
+    applying = false; // 失败允许重试，避免「已有更新正在进行」永久锁死
+    throw err;
   }
-
-  // 清理下载残留（延迟执行，避免文件占用）
-  setTimeout(() => { try { fs.rmSync(UPDATE_DIR, { recursive: true, force: true }); } catch { /* 忽略 */ } }, 5000).unref();
-
-  return { replacing: true, newBinary: exePath, version: check.latest, macNote };
 }
 
 /** 启动时清理上次更新留下的回滚备份 */

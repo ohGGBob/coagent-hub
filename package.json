@@ -1,6 +1,6 @@
 {
   "name": "coagent-hub",
-  "version": "0.12.0",
+  "version": "0.12.1",
   "private": true,
   "type": "module",
   "description": "CoAgent Hub — 多 Agent 协同开发中枢（单文件 exe 版）",
@@ -19,6 +19,7 @@
   "scripts": {
     "start": "node scripts/serve.mjs",
     "smoke": "node scripts/smoke.js",
+    "test": "node --test test/auth.test.mjs test/git-repo.test.mjs test/update.test.mjs test/files.test.mjs test/jsonfile.test.mjs",
     "hub": "node scripts/hub.mjs",
     "build:exe": "node scripts/build-exe.mjs",
     "fixrefs": "node scripts/fix-refs.mjs"
