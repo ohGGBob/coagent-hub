@@ -373,8 +373,10 @@ try {
   // ------------------------------------------------------------ 9.5 Agent 独立人格（防人云亦云）
   section('9.5 Agent 独立人格（独立思考提示词）');
   const personas = (await alice.personas.list()).personas;
-  ok(Array.isArray(personas) && personas.length >= 8, '内置人格库 ≥ 8 种（架构/守卫/测试/文档/先锋/稳健/安全/侦探）');
+  ok(Array.isArray(personas) && personas.length >= 14, '内置人格库 ≥ 14 种（架构/守卫/测试/文档/先锋/稳健/安全/侦探/视觉/运维/体验/研究/思辨/性能）');
   ok(personas.every((p) => p.id && p.prompt && p.emoji), '每个人格含 id / 提示词 / emoji');
+  ok(personas.some((p) => p.id === 'visual' && p.prompt.includes('视觉')), '新增人格：视觉设计师可用');
+  ok(personas.some((p) => p.id === 'optimizer' && p.prompt.includes('性能')), '新增人格：性能工程师可用');
 
   // 给 dave 绑定内置人格「代码守卫」
   await alice.users.setPersona('dave', { personaId: 'guardian' });

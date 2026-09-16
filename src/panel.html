@@ -929,6 +929,7 @@ async function loadEmbedBadge() {
 }
 let UNREAD_COUNT = 0;
 let DESKTOP_NOTIF = localStorage.getItem('coagent_desktop_notif') === '1';
+let SOUND_ENABLED = localStorage.getItem('coagent_sound') !== '0';
 
 /** 请求桌面通知权限并显示通知 */
 async function enableDesktopNotif() {
@@ -936,6 +937,34 @@ async function enableDesktopNotif() {
   const perm = await Notification.requestPermission();
   if (perm === 'granted') { DESKTOP_NOTIF = true; localStorage.setItem('coagent_desktop_notif', '1'); toast('桌面通知已开启', 'ok'); }
   else toast('通知权限被拒绝', 'err');
+}
+function toggleSound() {
+  SOUND_ENABLED = !SOUND_ENABLED;
+  localStorage.setItem('coagent_sound', SOUND_ENABLED ? '1' : '0');
+  if (SOUND_ENABLED) playPing();
+  toast(SOUND_ENABLED ? '提示音已开启' : '提示音已关闭', 'ok');
+  refreshAll();
+}
+/** 微信式轻提示音（WebAudio 合成，零资源依赖） */
+let _audioCtx = null;
+function playPing() {
+  if (!SOUND_ENABLED) return;
+  try {
+    _audioCtx = _audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+    if (_audioCtx.state === 'suspended') _audioCtx.resume();
+    const now = _audioCtx.currentTime;
+    const mk = (freq, start, dur, gain) => {
+      const o = _audioCtx.createOscillator(); o.type = 'sine'; o.frequency.value = freq;
+      const g = _audioCtx.createGain();
+      g.gain.setValueAtTime(0, start);
+      g.gain.linearRampToValueAtTime(gain, start + 0.012);
+      g.gain.exponentialRampToValueAtTime(0.001, start + dur);
+      o.connect(g); g.connect(_audioCtx.destination);
+      o.start(start); o.stop(start + dur + 0.02);
+    };
+    mk(880, now, 0.16, 0.08);
+    mk(1318, now + 0.11, 0.2, 0.06);
+  } catch { /* 音频不可用则静默 */ }
 }
 function showDesktopNotif(title, body) {
   if (!DESKTOP_NOTIF || !('Notification' in window) || Notification.permission !== 'granted') return;
@@ -1197,6 +1226,7 @@ async function boot() {
   POLL_TIMER = setInterval(() => { if (document.visibilityState === 'visible') refreshAll(); }, 30000);
 }
 
+let _FILE_WS_T = null;
 /* ---------- WebSocket ---------- */
 function connectWS() {
   if (WS) { try { WS.close(); } catch {} }
@@ -1211,21 +1241,29 @@ function connectWS() {
       LAST_SEQ = Math.max(LAST_SEQ, msg.seq);
       updateSeq();
       notifyPush(msg);
+      // 提示音：他人产生的新事件（自己操作的回声不响）
+      if (SOUND_ENABLED && msg.authorId && msg.authorId !== ME.userId) playPing();
+      // 文件事件 → 防抖刷新文件中心与上下文附件名
+      if (msg.type === 'file.uploaded' || msg.type === 'file.deleted') {
+        clearTimeout(_FILE_WS_T);
+        _FILE_WS_T = setTimeout(() => refreshAll(), 300);
+      }
       // 消息页：实时追加聊天气泡；不在消息页则累计未读
       if (msg.type === 'message.posted') {
         if (!CACHE.messages.some((m) => m.seq === msg.seq)) CACHE.messages.push(msg);
         if (PAGE === 'messages') appendMsgBubble(msg);
         else { MSG_UNREAD++; updateMsgBadge(); }
       }
-      // 桌面通知：仅对重要事件
+      // 桌面通知：仅对重要事件（页面不可见时）
       if (DESKTOP_NOTIF && document.visibilityState !== 'visible') {
         const notifMap = {
           'task.created': '新任务', 'task.claimed': '任务被认领',
           'context.appended': '新上下文', 'review.requested': '新 PR 审核',
-          'review.approved': 'PR 已批准', 'comment.posted': '新评论',
-          'branch.pushed': '代码推送', 'message.posted': '新消息',
+          'review.approved': 'PR 已批准', 'review.rejected': 'PR 被拒绝',
+          'comment.posted': '新评论', 'branch.pushed': '代码推送',
+          'message.posted': '新消息', 'file.uploaded': '新文件',
         };
-        if (notifMap[msg.type]) showDesktopNotif(notifMap[msg.type], msg.payload?.title || msg.payload?.text || msg.payload?.branch || '');
+        if (notifMap[msg.type]) showDesktopNotif(notifMap[msg.type], msg.payload?.title || msg.payload?.text || msg.payload?.branch || msg.payload?.filename || '');
       }
     }
     if (PAGE === 'activity' || PAGE === 'dashboard') renderCurrent();
@@ -2227,6 +2265,7 @@ async function viewDiff(branch) {
    ============================================================ */
 let FILE_FILTER = 'all';       // all|image|video|audio|archive|doc|code|other
 let FILE_SEARCH = '';          // 文件页内搜索词
+let FILE_SHOWN = 100;          // 列表分页：单屏渲染条数，底部可加载更多
 const FILE_KIND = {
   image:   { icon: '🖼️', tone: 'ok' },
   video:   { icon: '🎬', tone: 'purple' },
@@ -2278,9 +2317,9 @@ function renderFiles() {
         <input class="input" id="fl-q" placeholder="🔎 在文件名 / 描述中搜索…" value="${esc(FILE_SEARCH)}" style="flex:1" oninput="FILE_SEARCH=this.value;renderFiles()">
       </div>
       <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px">
-        ${kindChips.map((k) => `<button class="chip ${FILE_FILTER === k ? 'accent' : ''}" style="cursor:pointer" onclick="FILE_FILTER='${k}';renderFiles()">${kindLabel[k]}</button>`).join('')}
+        ${kindChips.map((k) => `<button class="chip ${FILE_FILTER === k ? 'accent' : ''}" style="cursor:pointer" onclick="FILE_FILTER='${k}';FILE_SHOWN=100;renderFiles()">${kindLabel[k]}</button>`).join('')}
       </div>
-      ${list.length ? list.map((f) => fileRowHTML(f)).join('') : '<div class="empty"><div class="icon">📁</div><div class="text">没有匹配的文件</div></div>'}
+      ${list.length ? list.slice(0, FILE_SHOWN).map((f) => fileRowHTML(f)).join('') + (list.length > FILE_SHOWN ? `<div style="text-align:center;padding:12px"><button class="btn ghost" onclick="FILE_SHOWN+=100;renderFiles()">加载更多（${list.length - FILE_SHOWN} 个）</button></div>` : '') : '<div class="empty"><div class="icon">📁</div><div class="text">没有匹配的文件</div></div>'}
     </div>
   `;
   runTickers();
@@ -2290,15 +2329,16 @@ function fileRowHTML(f) {
   const ki = FILE_KIND[k];
   const isMine = f.uploadedBy === ME.userId || (ME.scopes || []).includes('admin:write');
   const isImage = String(f.mimeType || '').startsWith('image/');
+  const canPreview = isImage || String(f.mimeType || '') === 'application/pdf' || k === 'code';
   return `<div class="file-row">
     <div class="file-ic ${ki.tone}">${ki.icon}</div>
     <div class="file-body">
-      <div class="file-name" title="${esc(f.filename)}">${esc(f.filename)} ${isImage ? '<span class="chip ok" style="font-size:9px">可预览</span>' : ''}</div>
+      <div class="file-name" title="${esc(f.filename)}">${esc(f.filename)} ${canPreview ? '<span class="chip ok" style="font-size:9px">可预览</span>' : ''}</div>
       ${f.description ? `<div class="file-desc">${esc(f.description)}</div>` : ''}
       <div class="file-meta"><span>${fmtBytes(f.size)}</span><span>👤 ${esc(f.uploadedBy)} ${personaBadge(f.uploadedBy)}</span><span>🕐 ${timeAgo(f.createdAt)}</span></div>
     </div>
     <div class="file-ops">
-      ${isImage ? `<button class="btn ghost sm" onclick="filePreview('${f.id}')">👁 预览</button>` : ''}
+      ${canPreview ? `<button class="btn ghost sm" onclick="filePreview('${f.id}')">👁 预览</button>` : ''}
       <a class="btn ghost sm" style="text-decoration:none" href="/files/${f.id}" download="${esc(f.filename)}">⬇ 下载</a>
       ${isMine ? `<button class="btn danger sm" onclick="delFile('${f.id}')">🗑</button>` : ''}
     </div>
@@ -2330,15 +2370,33 @@ function dropFileUpload(e) {
   toast(`已选择 ${file.name}，补个描述再点上传`, 'ok');
 }
 async function filePreview(id) {
+  const meta = CACHE.files.find((f) => f.id === id);
   try {
     const res = await fetch('/files/' + id, { headers: { 'Authorization': 'Bearer ' + TOKEN } });
     if (!res.ok) return toast('加载失败', 'err');
     const blob = await res.blob();
-    if (!blob.type.startsWith('image/')) return toast('该类型不支持内联预览，请下载', 'err');
-    const url = URL.createObjectURL(blob);
-    showModal(`<h3>🖼️ ${esc(CACHE.files.find((f) => f.id === id)?.filename || '预览')}</h3>
-      <img src="${url}" style="max-width:100%;max-height:60vh;border-radius:12px;display:block;margin:0 auto" onload="setTimeout(()=>URL.revokeObjectURL('${url}'),60000)">
-      <div class="actions"><a class="btn" href="/files/${id}" download style="text-decoration:none">⬇ 下载原图</a><button class="btn ghost" onclick="closeModal()">关闭</button></div>`);
+    const name = meta?.filename || '预览';
+    const dlBtn = `<a class="btn" href="/files/${id}" download style="text-decoration:none">⬇ 下载</a><button class="btn ghost" onclick="closeModal()">关闭</button>`;
+    if (blob.type.startsWith('image/')) {
+      const url = URL.createObjectURL(blob);
+      showModal(`<h3>🖼️ ${esc(name)}</h3>
+        <img src="${url}" style="max-width:100%;max-height:60vh;border-radius:12px;display:block;margin:0 auto" onload="setTimeout(()=>URL.revokeObjectURL('${url}'),60000)">
+        <div class="actions">${dlBtn}</div>`);
+    } else if (blob.type === 'application/pdf') {
+      const url = URL.createObjectURL(blob);
+      showModal(`<h3>📄 ${esc(name)}</h3>
+        <iframe src="${url}" style="width:100%;height:62vh;border:1px solid var(--border);border-radius:10px;background:#fff" title="${esc(name)}"></iframe>
+        <div class="actions">${dlBtn}</div>`);
+    } else if (blob.type.startsWith('text/') || fileKind(meta?.mimeType, name) === 'code') {
+      const text = await blob.text();
+      const MAX = 8000;
+      const clipped = text.length > MAX ? '\n\n…（内容过长，已截断前 8000 字符，请下载查看全文）' : '';
+      showModal(`<h3>💻 ${esc(name)} <span class="chip">${text.length} 字符</span></h3>
+        <pre style="max-height:56vh;overflow:auto;background:var(--bg-input);border:1px solid var(--border);border-radius:10px;padding:12px;font-family:var(--mono);font-size:12px;line-height:1.6;white-space:pre-wrap;word-break:break-word">${esc(text.slice(0, MAX) + clipped)}</pre>
+        <div class="actions">${dlBtn}</div>`);
+    } else {
+      toast('该类型不支持内联预览，请下载查看', 'err');
+    }
   } catch (e) { toast('✗ ' + e.message, 'err'); }
 }
 function delFile(id) {
@@ -2454,7 +2512,7 @@ async function renderUsers() {
         ${PERSONA_LIB.map((p) => `<option value="${p.id}">${p.emoji} ${p.name} — ${p.tag}</option>`).join('')}
       </select>
       <button class="btn" onclick="createUser()">👤 开户</button></div>
-      <p style="font-size:12px;color:var(--text-mute);margin-top:4px">token 只显示一次，请立刻复制转发。默认普通 agent 权限。人格 = 该 agent 的独立视角提示词，防止人云亦云。</p></div>
+      <p style="font-size:12px;color:var(--text-mute);margin-top:4px">token 只显示一次，请立刻复制转发。默认普通 agent 权限。人格 = 该 agent 的独立视角提示词，防止人云亦云。 <button class="btn ghost sm" onclick="personaLibrary()">🧠 查看人格库（${PERSONA_LIB.length} 种）</button></p></div>
     <div class="card" style="padding:0"><div class="table-wrap"><table><tr><th>ID</th><th>显示名</th><th>人格</th><th>权限</th><th>操作</th></tr>
       <tr><td colspan="5"><div class="skeleton" style="height:20px;margin:10px"></div></td></tr></table></div></div>`;
   try {
@@ -2484,6 +2542,40 @@ async function createUser() {
   const id = $('us-id').value.trim(); if (!id) return toast('userId 不能为空', 'err');
   const personaId = $('us-persona')?.value || undefined;
   api('POST', '/users', { id, name: $('us-name').value.trim(), personaId }).then((r) => { showTokenModal(r.user.token, id); $('us-id').value = ''; $('us-name').value = ''; $('us-persona').value = ''; refreshAll(); }).catch((e) => toast('✗ ' + e.message, 'err'));
+}
+/* 人格库浏览模态：全量内置人格卡片 + 复制提示词 */
+async function personaLibrary() {
+  if (!PERSONA_LIB.length) {
+    try { PERSONA_LIB = (await api('GET', '/personas')).personas || []; } catch { PERSONA_LIB = []; }
+  }
+  showModal(`<h3>🧠 内置人格库（${PERSONA_LIB.length} 种）</h3>
+    <p style="font-size:12px;color:var(--text-sub);margin-bottom:12px">每个 agent 绑定一种人格，就会带着独立视角参与讨论、评审与决策——防止人云亦云。点击「复制提示词」可贴给任意 agent 当 system prompt。</p>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;max-height:56vh;overflow-y:auto;padding-right:4px">
+      ${PERSONA_LIB.map((p) => `
+        <div class="persona-card" style="background:var(--bg-elev);border:1px solid var(--border);border-radius:14px;padding:12px">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+            <span style="font-size:20px">${p.emoji}</span>
+            <div><div style="font-weight:700;font-size:13px">${esc(p.name)}</div>
+            <div style="font-size:10.5px;color:var(--text-mute)">${esc(p.tag)}</div></div>
+          </div>
+          <div style="font-size:11.5px;color:var(--text-sub);line-height:1.55;margin-bottom:8px;display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden">${esc(p.prompt)}</div>
+          <button class="btn ghost sm" onclick="copyPersona('${p.id}')">📋 复制提示词</button>
+        </div>`).join('')}
+    </div>
+    <div class="actions"><button class="btn ghost" onclick="closeModal()">关闭</button></div>`);
+}
+async function copyPersona(id) {
+  const p = PERSONA_LIB.find((x) => x.id === id);
+  if (!p) return;
+  try {
+    await navigator.clipboard.writeText(p.prompt);
+    toast(`已复制「${p.name}」的提示词`, 'ok');
+  } catch {
+    const ta = document.createElement('textarea');
+    ta.value = p.prompt; document.body.appendChild(ta); ta.select();
+    document.execCommand('copy'); ta.remove();
+    toast(`已复制「${p.name}」的提示词`, 'ok');
+  }
 }
 /* 人格设置模态：内置人格下拉 + 自定义提示词 + 预览/清除 */
 async function editPersona(id, current) {
@@ -2608,6 +2700,7 @@ function renderSettings() {
       <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:14px">
         <button class="btn ghost" onclick="toggleTheme()">🌓 切换深色 / 浅色主题</button>
         <button class="btn ghost" onclick="enableDesktopNotif()">🔔 ${DESKTOP_NOTIF ? '桌面通知已开启' : '开启桌面通知'}</button>
+        <button class="btn ghost" onclick="toggleSound()">🔊 提示音：${SOUND_ENABLED ? '开' : '关'}</button>
       </div>
       <div style="font-size:12px;font-weight:600;color:var(--text-sub);margin-bottom:8px">界面皮肤</div>
       <div style="display:flex;gap:10px;flex-wrap:wrap">
