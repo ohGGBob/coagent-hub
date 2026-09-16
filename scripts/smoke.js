@@ -475,6 +475,17 @@ try {
   ok(fs.existsSync(path.join(cliWork, '.coagent.json')), 'CLI init：项目拉取 + 生成 .coagent.json 配置');
   ok(g(['rev-parse', '--abbrev-ref', 'HEAD'], cliWork) === 'dev/alice', 'CLI init 切到私有分支 dev/alice');
 
+  // 人格落盘：先给 alice 绑人格再 init，应生成 .coagent-persona.md
+  await alice.users.setPersona('alice', { personaId: 'architect' });
+  const cliWork2 = path.join(TMP_ROOT, 'cli-work2');
+  await cli(['init', cliWork2, '--hub', hubUrl, '--token', 'tok_alice_0001']);
+  ok(
+    fs.existsSync(path.join(cliWork2, '.coagent-persona.md')) &&
+      fs.readFileSync(path.join(cliWork2, '.coagent-persona.md'), 'utf8').includes('架构'),
+    'CLI init：人格提示词落盘为 .coagent-persona.md（agent 本地读取）',
+  );
+  await alice.users.setPersona('alice', null);
+
   fs.writeFileSync(path.join(cliWork, 'cli.md'), '# from cli\n');
   g(['add', 'cli.md'], cliWork);
   g(['commit', '--quiet', '-m', 'feat: cli push'], cliWork);

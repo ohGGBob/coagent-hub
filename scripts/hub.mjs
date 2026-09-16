@@ -191,6 +191,15 @@ export async function run(argv) {
         path.join(dir, CONFIG_NAME),
         JSON.stringify({ hubUrl: client.hubUrl, token: client.token, userId: me.userId, branch }, null, 2),
       );
+      // 独立人格：把服务端设定的 persona.prompt 写入 .coagent/persona.md，
+      // 本地 agent 读它当 system prompt / 角色设定（保持独立思考，防人云亦云）
+      if (me.persona?.prompt) {
+        const personaMd = `# 我的独立人格（CoAgent Hub）\n\n${me.persona.prompt}\n`;
+        fs.writeFileSync(path.join(dir, '.coagent-persona.md'), personaMd);
+        log(ok(`独立人格已就位：见 ${color.cyan('.coagent-persona.md')}`));
+      } else {
+        log(info('未设定独立人格：可在面板「用户管理 → 🧠 人格」绑定，重启 init 或 pull 后生效'));
+      }
       log(hr());
       log(ok(`项目已拉到 ${color.bold(dir)}`));
       log(ok(`你的私有分支：${color.cyan(branch)}`));

@@ -283,8 +283,9 @@ body {
 .search-trigger:hover { border-color: var(--accent-border); box-shadow: 0 0 0 3px var(--accent-bg); }
 .topbar .icon-btn { position: relative; }
 .topbar .icon-btn .notif-dot {
-  position: absolute; top: -2px; right: -2px; width: 8px; height: 8px;
-  background: var(--err); border-radius: 50%; border: 2px solid var(--bg-elev);
+  position: absolute; top: -4px; right: -4px; min-width: 15px; height: 15px; padding: 0 3px;
+  background: var(--err); color: #fff; border-radius: 9px; border: 2px solid var(--bg-elev);
+  font-size: 9px; font-weight: 800; line-height: 11px; text-align: center; box-sizing: content-box;
 }
 
 .content { flex: 1; overflow-y: auto; padding: 24px; }
@@ -541,15 +542,19 @@ tr:hover td { background: var(--bg-hover); }
 
 /* 通知面板 */
 .notif-panel {
-  position: fixed; top: 52px; right: 24px; width: 340px; background: var(--bg-card);
-  border: 1px solid var(--border-strong); border-radius: 10px; box-shadow: var(--shadow-lg);
-  z-index: 1500; max-height: 400px; overflow-y: auto; animation: fadeIn 0.15s ease;
+  position: fixed; top: 60px; right: 24px; width: 350px; background: var(--bg-card);
+  border: 1px solid var(--border-strong); border-radius: 14px; box-shadow: var(--shadow-lg);
+  z-index: 1500; overflow: hidden; animation: fadeIn 0.15s ease; display: flex; flex-direction: column;
 }
-.notif-item { padding: 10px 14px; border-bottom: 1px solid var(--border); cursor: pointer; transition: background var(--transition); }
+.notif-head { display: flex; align-items: center; justify-content: space-between; padding: 12px 14px; border-bottom: 1px solid var(--border); background: var(--bg-elev); }
+.notif-scroll { max-height: 380px; overflow-y: auto; }
+.notif-item { display: flex; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--border); cursor: pointer; transition: background var(--transition); align-items: flex-start; }
 .notif-item:hover { background: var(--bg-hover); }
-.notif-item .n-type { font-size: 10px; font-weight: 700; font-family: var(--mono); color: var(--text-mute); text-transform: uppercase; }
-.notif-item .n-text { font-size: 12px; color: var(--text); margin-top: 2px; }
-.notif-item .n-time { font-size: 10px; color: var(--text-mute); margin-top: 2px; }
+.notif-item.unread { background: var(--accent-bg); }
+.notif-item .n-icon { font-size: 16px; margin-top: 1px; flex-shrink: 0; }
+.notif-item .n-body { flex: 1; min-width: 0; }
+.notif-item .n-text { font-size: 12.5px; color: var(--text); word-break: break-word; }
+.notif-item .n-meta { font-size: 10.5px; color: var(--text-mute); margin-top: 3px; }
 
 /* 响应式 */
 @media (max-width: 1100px) {
@@ -998,6 +1003,8 @@ async function boot() {
   $('user-name').textContent = ME.name;
   $('user-id').textContent = ME.userId;
   $('user-avatar').textContent = (ME.name || ME.userId || '?').charAt(0).toUpperCase();
+  UNREAD_COUNT = NOTIFS.filter((n) => !n.read).length;
+  updateNotifDot();
   try { HEALTH = await api('GET', '/healthz'); $('brand-ver').textContent = 'v' + HEALTH.version; LAST_SEQ = HEALTH.lastSeq; } catch {}
   try { PERSONA_LIB = (await api('GET', '/personas')).personas || []; } catch { /* 兼容 */ }
   connectWS();
@@ -1020,8 +1027,7 @@ function connectWS() {
     if (msg.seq) {
       LAST_SEQ = Math.max(LAST_SEQ, msg.seq);
       updateSeq();
-      UNREAD_COUNT++;
-      updateNotifDot();
+      notifyPush(msg);
       // 消息页：实时追加聊天气泡；不在消息页则累计未读
       if (msg.type === 'message.posted') {
         if (!CACHE.messages.some((m) => m.seq === msg.seq)) CACHE.messages.push(msg);
@@ -1047,7 +1053,11 @@ function connectWS() {
 }
 const setWsStatus = (t, live) => { $('ws-status').textContent = t; $('ws-dot').className = 'dot' + (live ? ' live' : ''); };
 const updateSeq = () => { $('seq-display').textContent = 'seq ' + LAST_SEQ; };
-const updateNotifDot = () => { $('notif-dot').style.display = UNREAD_COUNT > 0 ? '' : 'none'; };
+const updateNotifDot = () => {
+  const b = $('notif-dot');
+  if (UNREAD_COUNT > 0) { b.style.display = ''; b.textContent = UNREAD_COUNT > 9 ? '9+' : UNREAD_COUNT; }
+  else b.style.display = 'none';
+};
 
 /* ---------- 数据刷新 ---------- */
 let PERSONA_MAP = {};   // authorId -> {id, prompt}（全员人格，来自 /stats）
@@ -1639,10 +1649,14 @@ function renderOnboard() {
       </div></div>
 
       <div class="wizard-step"><div class="wizard-num">2</div><div class="wizard-body">
-        <div class="card-title">给同学开户</div>
+        <div class="card-title">给同学开户（可顺带选人格）</div>
         <div class="form-row">
           <input class="input" id="wz-uid" placeholder="userId（字母/数字，如 xiaoming-codex）" style="flex:1;min-width:160px">
           <input class="input" id="wz-name" placeholder="显示名（可选）" style="flex:1;min-width:120px">
+          <select class="select" id="wz-persona" style="width:190px">
+            <option value="">人格：不设定</option>
+            ${PERSONA_LIB.map((p) => `<option value="${p.id}">${p.emoji} ${p.name} — ${p.tag}</option>`).join('')}
+          </select>
           <button class="btn" onclick="wzCreateUser()">开户</button>
         </div>
         <div id="wz-card" style="margin-top:10px"></div>
@@ -1655,7 +1669,7 @@ function renderOnboard() {
           <code style="font-family:var(--mono);font-size:12px;background:var(--bg);padding:8px 10px;border-radius:8px;flex:1;word-break:break-all" id="wz-cmd">coagent.exe app --hub ${esc(hub)} --token &lt;接入token&gt;</code>
           <button class="btn ghost sm" onclick="copyText(\`coagent.exe app --hub ${esc(hub)} --token <接入token>\`)">复制</button>
         </div>
-        <p style="font-size:12px;color:var(--text-sub);margin-top:10px">同学用 agent 干活的话，把这三行写进它的指令文件（AGENTS.md / CLAUDE.md）：</p>
+        <p style="font-size:12px;color:var(--text-sub);margin-top:10px">同学用 agent 干活的话，把这三行写进它的指令文件（AGENTS.md / CLAUDE.md），并在文件头加一句「你的独立人格提示词」——每个 agent 各有视角，防止人云亦云（人格在「用户管理 → 🧠 人格」里设定，agent 开机自动拉取自己的）：</p>
         <div class="form-row" style="align-items:center">
           <code style="font-family:var(--mono);font-size:12px;background:var(--bg);padding:8px 10px;border-radius:8px;flex:1;white-space:pre-wrap;word-break:break-all">npm run hub -- init ./my-work --hub ${esc(hub)} --token <接入token>
 npm run hub -- sync --dir ./my-work
@@ -1663,6 +1677,19 @@ npm run hub -- push --dir ./my-work</code>
           <button class="btn ghost sm" onclick="copyText(\`npm run hub -- init ./my-work --hub ${esc(hub)} --token <接入token>\\nnpm run hub -- sync --dir ./my-work\\nnpm run hub -- push --dir ./my-work\`)">复制</button>
         </div>
         <p style="font-size:12px;color:var(--text-sub);margin-top:10px">也可以直接让同学的 agent 自助接入：fetch <code style="font-family:var(--mono)">${esc(hub)}/guide</code> 并照做。</p>
+      </div></div>
+
+      <div class="wizard-step"><div class="wizard-num">4</div><div class="wizard-body">
+        <div class="card-title">🧠 独立人格库（多视角协作 · 防人云亦云）</div>
+        <p style="font-size:12px;color:var(--text-sub);margin-bottom:12px">给每个 agent 绑定一种人格，它就会带着自己的专业视角思考与评审——架构、测试、安全、激进、稳健各有立场，观点不再趋同。绑定后 agent 通过 <code style="font-family:var(--mono)">GET /me</code> 自动拿到自己的提示词。</p>
+        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px">
+          ${PERSONA_LIB.length ? PERSONA_LIB.map((p) => `
+            <div style="border:1px solid var(--border);border-radius:12px;padding:12px;background:var(--bg-card);transition:all .18s" onmouseover="this.style.borderColor='var(--accent-border)';this.style.boxShadow='var(--shadow)'" onmouseout="this.style.borderColor='';this.style.boxShadow=''">
+              <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px"><span style="font-size:18px">${p.emoji}</span><span style="font-weight:700;font-size:13px">${esc(p.name)}</span><span class="chip accent" style="font-size:9px;margin-left:auto">${esc(p.tag)}</span></div>
+              <div style="font-size:11.5px;color:var(--text-sub);line-height:1.6">${esc(p.prompt.slice(0, 60))}…</div>
+            </div>`).join('') : '<span style="color:var(--text-mute);font-size:12px">人格库加载中…</span>'}
+        </div>
+        <button class="btn ghost sm" style="margin-top:12px" onclick="nav('users')">去「用户管理」绑定人格 →</button>
       </div></div>
     </div>`;
   wzCheckSeed();
@@ -1703,24 +1730,22 @@ async function wzRotateSeeds() {
 async function wzCreateUser() {
   const id = $('wz-uid').value.trim();
   const name = $('wz-name').value.trim();
+  const personaId = $('wz-persona')?.value || undefined;
   if (!id) return toast('userId 不能为空', 'err');
   try {
-    const { user } = await api('POST', '/users', { id, name: name || undefined });
+    const { user } = await api('POST', '/users', { id, name: name || undefined, personaId });
     const hub = location.origin;
-    const card =
-`════════ CoAgent Hub 接入卡片 ════════
-Hub 地址：${hub}
-账号：${user.id}${user.name ? `（${user.name}）` : ''}
-Token：${user.token}
-（token 只显示这一次，请妥善保存）
+    const personaLine = user.persona
+      ? `\n独立人格：${PERSONA_LIB.find((p) => p.id === user.persona.id)?.emoji || '🧠'} ${PERSONA_LIB.find((p) => p.id === user.persona.id)?.name || '自定义'}（提示词见「用户管理 → 人格」）`
+      : '';
 
 【同学：双击直达应用】
 coagent.exe app --hub ${hub} --token ${user.token}
 
 【Agent：三行命令开工】
-npm run hub -- init ./my-work --hub ${hub} --token ${user.token}
-npm run hub -- sync --dir ./my-work
-npm run hub -- push --dir ./my-work`;
+npx coagent-hub -- init ./my-work --hub ${hub} --token ${user.token}
+npx coagent-hub -- sync --dir ./my-work
+npx coagent-hub -- push --dir ./my-work${personaLine}`;
     $('wz-card').innerHTML = `
       <div class="card" style="background:var(--bg)">
         <div class="card-title">✅ 开户成功（token 只显示这一次）</div>
@@ -1730,7 +1755,7 @@ npm run hub -- push --dir ./my-work`;
           <button class="btn ghost sm" onclick="downloadText('coagent-接入-${esc(user.id)}.txt', this.closest('.card').querySelector('pre').textContent)">下载 .txt</button>
         </div>
       </div>`;
-    $('wz-uid').value = ''; $('wz-name').value = '';
+    $('wz-uid').value = ''; $('wz-name').value = ''; if ($('wz-persona')) $('wz-persona').value = '';
   } catch (e) { toast('✗ ' + e.message, 'err'); }
 }
 
@@ -2549,17 +2574,78 @@ function cmdKey(e) {
 }
 
 /* ============================================================
-   通知面板
+   通知中心（未读持久化 + 类型图标 + 点击跳转）
    ============================================================ */
+const NOTIF_KEY = 'coagent_notifs_v1';
+let NOTIFS = [];
+try { NOTIFS = JSON.parse(localStorage.getItem(NOTIF_KEY) || '[]'); } catch { NOTIFS = []; }
+function saveNotifs() { localStorage.setItem(NOTIF_KEY, JSON.stringify(NOTIFS.slice(0, 60))); }
+/* 事件 → 通知展示（图标 / 文案 / 跳转页） */
+function notifyMeta(ev) {
+  const p = ev.payload || {};
+  const map = {
+    'task.created':      { icon: '📋', text: `${p.title || '新任务'}`, page: 'tasks' },
+    'task.claimed':      { icon: '🙋', text: `认领任务「${p.title || ''}」`, page: 'tasks' },
+    'task.updated':      { icon: '✏️', text: `更新任务「${p.title || ''}」`, page: 'tasks' },
+    'context.appended':  { icon: '💬', text: `新上下文「${p.title || ''}」`, page: 'context' },
+    'review.requested':  { icon: '🔍', text: `新 PR 审核：${p.branch || ''} → ${p.base || ''}`, page: 'reviews' },
+    'review.approved':   { icon: '✅', text: `PR 已批准 ${(p.id || '').slice(0, 8)}`, page: 'reviews' },
+    'review.rejected':   { icon: '❌', text: `PR 被拒绝 ${(p.id || '').slice(0, 8)}`, page: 'reviews' },
+    'comment.posted':    { icon: '💭', text: `评论：${(p.preview || '').slice(0, 40)}`, page: 'reviews' },
+    'branch.pushed':     { icon: '🚀', text: `推送 ${p.branch || ''}`, page: 'branches' },
+    'branch.merged':     { icon: '🔀', text: `合并 ${p.branch || ''} → ${p.base || ''}`, page: 'branches' },
+    'message.posted':    { icon: '💬', text: `${p.text || ''}`.slice(0, 40), page: 'messages' },
+    'agent.status':      { icon: '🤖', text: `agent 状态：${JSON.stringify(p)}`.slice(0, 40), page: 'activity' },
+  };
+  const m = map[ev.type] || { icon: '📌', text: `${ev.type}`, page: 'activity' };
+  return { ...m, text: m.text || ev.type };
+}
+function notifyPush(ev) {
+  NOTIFS = NOTIFS.filter((n) => n.seq !== ev.seq);
+  NOTIFS.unshift({ seq: ev.seq, type: ev.type, authorId: ev.authorId, ts: ev.ts, payload: ev.payload, read: false });
+  saveNotifs();
+  UNREAD_COUNT = NOTIFS.filter((n) => !n.read).length;
+  updateNotifDot();
+}
 function toggleNotif() {
-  UNREAD_COUNT = 0; updateNotifDot();
-  const recent = (CACHE.events || []).slice(-10).reverse();
-  $('notif-root').innerHTML = `<div class="notif-panel">
-    ${recent.length ? recent.map((e) => `<div class="notif-item" onclick="nav('activity')">
-      <div class="n-type">${esc(e.type)}</div><div class="n-text">${esc(e.authorId)} · ${esc((e.payload?.title || e.payload?.branch || e.payload?.text || '').toString().slice(0, 50))}</div>
-      <div class="n-time">${timeAgo(e.ts)}</div></div>`).join('') : '<div class="empty" style="padding:20px"><div class="text">暂无通知</div></div>'}
+  const open = !!$('notif-panel');
+  $('notif-root').innerHTML = '';
+  if (open) return;
+  // 打开时把 recent 事件补入（刷新后第一次打开也能看到）
+  const recent = (CACHE.events || []).slice(-20).reverse();
+  for (const e of recent) if (!NOTIFS.some((n) => n.seq === e.seq)) NOTIFS.push({ seq: e.seq, type: e.type, authorId: e.authorId, ts: e.ts, payload: e.payload, read: true });
+  saveNotifs();
+  const unread = NOTIFS.filter((n) => !n.read);
+  $('notif-root').innerHTML = `<div class="notif-panel" id="notif-panel">
+    <div class="notif-head">
+      <span style="font-weight:700;font-size:14px">通知${unread.length ? ` <span class="chip err">${unread.length}</span>` : ''}</span>
+      <button class="btn ghost sm" onclick="notifReadAll()">全部已读</button>
+    </div>
+    <div class="notif-scroll">
+    ${NOTIFS.length ? NOTIFS.map((n) => {
+      const m = notifyMeta(n);
+      return `<div class="notif-item ${n.read ? '' : 'unread'}" onclick="notifOpen('${esc(n.type)}')">
+        <div class="n-icon">${m.icon}</div>
+        <div class="n-body">
+          <div class="n-text">${esc(m.text)}</div>
+          <div class="n-meta">${esc(n.authorId)} · ${timeAgo(n.ts)}${n.read ? '' : ' <span class="chip err" style="font-size:9px">新</span>'}</div>
+        </div>
+      </div>`;
+    }).join('') : '<div class="empty" style="padding:24px"><div class="text">暂无通知</div></div>'}
+    </div>
   </div>`;
+  // 打开即视为已读（有未读时）
+  if (unread.length) { NOTIFS.forEach((n) => { n.read = true; }); saveNotifs(); UNREAD_COUNT = 0; updateNotifDot(); setTimeout(renderCurrent, 0); }
   setTimeout(() => document.addEventListener('click', closeNotifOnce, { once: true }), 0);
+}
+function notifOpen(type) {
+  const pageMap = { 'message.posted': 'messages', 'task.created': 'tasks', 'task.claimed': 'tasks', 'task.updated': 'tasks', 'context.appended': 'context', 'review.requested': 'reviews', 'review.approved': 'reviews', 'review.rejected': 'reviews', 'branch.pushed': 'branches', 'branch.merged': 'branches' };
+  $('notif-root').innerHTML = '';
+  nav(pageMap[type] || 'activity');
+}
+function notifReadAll() {
+  NOTIFS.forEach((n) => { n.read = true; }); saveNotifs(); UNREAD_COUNT = 0; updateNotifDot();
+  toggleNotif();
 }
 function closeNotifOnce(e) { if (!$('.notif-panel')?.contains(e.target)) $('notif-root').innerHTML = ''; }
 
