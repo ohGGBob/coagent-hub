@@ -866,6 +866,8 @@ tr:hover td { background: var(--bg-hover); }
 .msg-body { max-width: 62%; display: flex; flex-direction: column; gap: 4px; }
 .msg-row.own .msg-body { align-items: flex-end; }
 .msg-meta { font-size: 10px; color: var(--text-mute); padding: 0 2px; }
+.speak-btn { cursor: pointer; color: var(--accent); font-size: 10px; margin-left: 2px; opacity: .85; }
+.speak-btn:hover { opacity: 1; text-decoration: underline; }
 .msg-bubble {
   padding: 9px 13px; border-radius: 12px; background: var(--bg-elev);
   border: 1px solid var(--border); font-size: 13.5px; word-break: break-word; line-height: 1.55;
@@ -1062,12 +1064,79 @@ function showDesktopNotif(title, body) {
   try { new Notification(title, { body, icon: 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">👑</text></svg>' }); } catch { /* 忽略 */ }
 }
 
+/* ---------- 消息语音朗读（Web Speech API，零依赖） ---------- */
+let VOICE_ENABLED = localStorage.getItem('coagent_voice') !== 'off';
+function speakText(t) {
+  if (!('speechSynthesis' in window)) return toast('当前浏览器不支持语音朗读', 'err');
+  const txt = String(t || '').replace(/<[^>]*>/g, '').trim();
+  if (!txt) return;
+  speechSynthesis.cancel();
+  const u = new SpeechSynthesisUtterance(txt);
+  u.lang = 'zh-CN'; u.rate = 1; u.pitch = 1;
+  speechSynthesis.speak(u);
+}
+function speakMsg(el) { speakText(el.dataset.text); }
+function toggleVoice() {
+  VOICE_ENABLED = !VOICE_ENABLED;
+  localStorage.setItem('coagent_voice', VOICE_ENABLED ? 'on' : 'off');
+  toast(VOICE_ENABLED ? '语音朗读已开启' : '语音朗读已关闭', 'ok');
+  if (PAGE === 'messages') renderMessages();
+}
+
 /* ---------- 工具 ---------- */
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const dt = (s) => { if (!s) return '—'; const d = new Date(s); return isNaN(d) ? String(s) : d.toLocaleString('zh-CN', { hour12: false, month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }); };
 const timeAgo = (s) => { if (!s) return ''; const diff = (Date.now() - new Date(s).getTime()) / 1000; if (diff < 60) return '刚刚'; if (diff < 3600) return Math.floor(diff/60)+' 分钟前'; if (diff < 86400) return Math.floor(diff/3600)+' 小时前'; return Math.floor(diff/86400)+' 天前'; };
 const shortId = (id) => String(id || '').slice(0, 8);
 const toast = (msg, type = '') => { const t = $('toast'); t.textContent = msg; t.className = 'show ' + type; clearTimeout(t._t); t._t = setTimeout(() => { t.className = ''; }, 3000); };
+
+/* ---------- CSV 导出（团队报告，零依赖） ---------- */
+function downloadCSV(filename, rows) {
+  const csv = rows.map((r) => r.map((c) => {
+    const s = String(c ?? '');
+    return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+  }).join(',')).join('\r\n');
+  const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+}
+async function exportReportCSV() {
+  try {
+    const s = await api('GET', '/stats');
+    const rows = [];
+    rows.push(['CoAgent Hub 团队报告', new Date().toLocaleString('zh-CN', { hour12: false })]);
+    rows.push([]);
+    rows.push(['# 成员贡献榜（近 7 天）']);
+    rows.push(['成员', '事件数']);
+    (s.contributors || []).forEach((c) => rows.push([c.name, c.count]));
+    rows.push([]);
+    rows.push(['# 任务状态分布']);
+    rows.push(['状态', '数量']);
+    rows.push(['待认领', s.tasks?.byStatus?.open || 0]);
+    rows.push(['进行中', s.tasks?.byStatus?.claimed || 0]);
+    rows.push(['已完成', s.tasks?.byStatus?.done || 0]);
+    rows.push([]);
+    rows.push(['# 近 14 天活动趋势']);
+    rows.push(['日期', '事件数', '当日完成', '累计完成']);
+    const daily = s.daily || []; const burn = s.taskDoneDaily || [];
+    daily.forEach((d, i) => rows.push([d.label, d.count, burn[i]?.count || 0, burn[i]?.accum || 0]));
+    rows.push([]);
+    rows.push(['# 上下文类型分布']);
+    rows.push(['类型', '数量']);
+    Object.entries(s.context?.byType || {}).forEach(([k, v]) => rows.push([k, v]));
+    rows.push([]);
+    rows.push(['# 文件类型分布']);
+    rows.push(['类型', '数量']);
+    Object.entries(s.files?.byType || {}).forEach(([k, v]) => rows.push([k, v]));
+    downloadCSV('coagent-report-' + new Date().toISOString().slice(0, 10) + '.csv', rows);
+    toast('团队报告已导出 📄', 'ok');
+  } catch (e) { toast('✗ ' + e.message, 'err'); }
+}
 async function api(method, url, body) {
   const headers = { 'Content-Type': 'application/json' };
   if (TOKEN) headers.Authorization = 'Bearer ' + TOKEN;
@@ -1344,11 +1413,12 @@ function connectWS() {
         clearTimeout(_FILE_WS_T);
         _FILE_WS_T = setTimeout(() => refreshAll(), 300);
       }
-      // 消息页：实时追加聊天气泡；不在消息页则累计未读
+      // 消息页：实时追加聊天气泡；不在消息页则累计未读；开启语音朗读时播报他人消息
       if (msg.type === 'message.posted') {
         if (!CACHE.messages.some((m) => m.seq === msg.seq)) CACHE.messages.push(msg);
         if (PAGE === 'messages') appendMsgBubble(msg);
         else { MSG_UNREAD++; updateMsgBadge(); }
+        if (VOICE_ENABLED && msg.authorId !== ME.userId) speakText((msg.payload?.text || ''));
       }
       // 桌面通知：重要事件（页面不可见时）或「关注任务」的变更（必达，可见也弹）
       if (DESKTOP_NOTIF && (document.visibilityState !== 'visible' || followedNow)) {
@@ -1492,6 +1562,7 @@ function renderDashboard() {
           <div class="dash-sub">协同中枢实时概览 · 最后更新 ${new Date().toLocaleTimeString('zh-CN',{hour12:false})}${s.onlineUsers?.length ? ` · <span style="color:var(--ok)">${s.onlineUsers.length} 个 agent 在线</span>` : ''}</div>
         </div>
         <div style="display:flex;gap:8px">
+          <button class="btn ghost" onclick="exportReportCSV()">📄 导出报告</button>
           <button class="btn ghost" onclick="openCmd()">⌨️ 命令面板</button>
           <button class="btn" onclick="nav('tasks')">➕ 新任务</button>
         </div>
@@ -1644,6 +1715,7 @@ function renderTasks() {
         <button class="btn ghost sm" onclick="TASK_FOLLOW_FILTER=!TASK_FOLLOW_FILTER;renderTasks()" title="只看已关注的任务">${TASK_FOLLOW_FILTER ? '🔔 关注中' : '🔕 只看关注'}</button>
         ${BATCH_MODE && BATCH_SELECTED.size > 0 ? `
           <span style="font-size:12px;color:var(--accent)">已选 ${BATCH_SELECTED.size} 项</span>
+          <button class="btn sm" onclick="batchAction('claim')">🤝 批量认领</button>
           <button class="btn sm" onclick="batchAction('done')">✓ 批量完成</button>
           <button class="btn ghost sm" onclick="batchAction('priority','high')">⬆ 高优先级</button>
           <button class="btn danger sm" onclick="batchAction('delete')">🗑 批量删除</button>
@@ -1728,7 +1800,8 @@ async function batchAction(action, value) {
   let ok = 0, fail = 0;
   for (const id of BATCH_SELECTED) {
     try {
-      if (action === 'done') await api('PATCH', `/tasks/${id}`, { status: 'done' });
+      if (action === 'claim') await api('POST', `/tasks/${id}/claim`);
+      else if (action === 'done') await api('PATCH', `/tasks/${id}`, { status: 'done' });
       else if (action === 'priority') await api('PATCH', `/tasks/${id}`, { priority: value });
       else if (action === 'delete') await api('DELETE', `/tasks/${id}`);
       ok++;
@@ -1778,6 +1851,9 @@ async function openTaskDetail(id) {
       </div>
       <div class="actions">
         <button class="btn danger" onclick="deleteTask('${id}')" style="margin-right:auto">🗑 删除</button>
+        <button class="btn ghost" onclick="toggleFollowFromDetail('${id}')">${FOLLOWING.has(id) ? '🔔 已关注' : '🔕 关注任务'}</button>
+        ${task.status === 'open' ? `<button class="btn" onclick="claimFromDetail('${id}')">🤝 认领</button>` : ''}
+        ${task.status === 'claimed' && task.assignee === ME.userId ? `<button class="btn" onclick="doneFromDetail('${id}')">✓ 完成</button>` : ''}
         <button class="btn ghost" onclick="closeModal()">关闭</button>
         <button class="btn" id="task-comment-btn" onclick="postTaskComment('${id}')">发送评论</button>
       </div>
@@ -1809,6 +1885,19 @@ async function deleteTask(id) {
   if (!confirm('确定删除此任务？此操作不可撤销。')) return;
   try { await api('DELETE', `/tasks/${id}`); toast('任务已删除', 'ok'); closeModal(); refreshAll(); }
   catch (e) { toast('✗ ' + e.message, 'err'); }
+}
+/* 详情弹窗内的快捷流转：操作后刷新任务卡并重开详情保持上下文 */
+function toggleFollowFromDetail(id) {
+  toggleFollow(id);
+  closeModal(); openTaskDetail(id);
+}
+function claimFromDetail(id) {
+  claimTask(id);
+  closeModal(); setTimeout(() => openTaskDetail(id), 300);
+}
+function doneFromDetail(id) {
+  doneTask(id);
+  closeModal(); setTimeout(() => openTaskDetail(id), 300);
 }
 function commentHTML(c) {
   if (c.deleted) return `<div class="comment"><div class="c-deleted">此评论已删除</div></div>`;
@@ -1898,7 +1987,7 @@ function msgBubbleHTML(ev) {
     <div class="msg-row ${own ? 'own' : ''}">
       <div class="msg-avatar">${esc((ev.authorId || '?').charAt(0).toUpperCase())}</div>
       <div class="msg-body">
-        <div class="msg-meta">${own ? '我' : esc(ev.authorId)}${personaBadge(ev.authorId)} · ${timeAgo(ev.ts)}${chTag}</div>
+        <div class="msg-meta">${own ? '我' : esc(ev.authorId)}${personaBadge(ev.authorId)} · ${timeAgo(ev.ts)}${chTag}${VOICE_ENABLED ? ` <span class="speak-btn" data-text="${esc(ev.payload?.text || '')}" onclick="speakMsg(this)">🔊 朗读</span>` : ''}</div>
         <div class="msg-bubble">${text || '<span style="color:var(--text-mute)">（空消息）</span>'}</div>
       </div>
     </div>`;
@@ -1965,7 +2054,7 @@ async function renderMessages() {
           </div>`).join('')}
       </div>
       <div class="msg-main">
-        <div class="msg-chat-head">${chLabel}<span class="sub">· ${list.length} 条消息 · Enter 发送</span></div>
+        <div class="msg-chat-head">${chLabel}<span class="sub">· ${list.length} 条消息 · Enter 发送</span><span style="margin-left:auto;display:flex;gap:6px"><button class="btn ghost sm" onclick="toggleVoice()">${VOICE_ENABLED ? '🔊 朗读开' : '🔇 朗读关'}</button><button class="btn ghost sm" onclick="toggleSound()">${SOUND_ENABLED ? '🔔 提示音开' : '🔕 提示音关'}</button></span></div>
         <div class="msg-stream" id="msg-stream">
           ${list.length ? msgListHTML(list) : '<div class="empty-chan">还没有消息，打个招呼吧 👋</div>'}
         </div>
@@ -2941,6 +3030,8 @@ function renderSettings() {
         <button class="btn ghost" onclick="toggleTheme()">🌓 切换深色 / 浅色主题</button>
         <button class="btn ghost" onclick="enableDesktopNotif()">🔔 ${DESKTOP_NOTIF ? '桌面通知已开启' : '开启桌面通知'}</button>
         <button class="btn ghost" onclick="toggleSound()">🔊 提示音：${SOUND_ENABLED ? '开' : '关'}</button>
+        <button class="btn ghost" onclick="toggleVoice()">🗣 语音朗读：${VOICE_ENABLED ? '开' : '关'}</button>
+        <button class="btn ghost" onclick="exportReportCSV()">📄 导出团队报告 CSV</button>
       </div>
       <div style="font-size:12px;font-weight:600;color:var(--text-sub);margin-bottom:8px">界面皮肤</div>
       <div style="display:flex;gap:10px;flex-wrap:wrap">
@@ -3294,6 +3385,7 @@ async function filterCmd(q) {
     { icon: '📊', text: '前往仪表盘', sub: '概览统计', action: () => { closeCmd(); nav('dashboard'); } },
     { icon: '🟢', text: '查看成员在线', sub: '实时拓扑 · 谁在干什么', action: () => { closeCmd(); nav('members'); } },
     { icon: '📈', text: '查看效率分析', sub: '贡献榜 · 类型分布 · 趋势', action: () => { closeCmd(); nav('analytics'); } },
+    { icon: '📄', text: '导出团队报告', sub: 'CSV 下载（贡献/任务/趋势）', action: () => { closeCmd(); exportReportCSV(); } },
     { icon: '⚡', text: '查看活动流', sub: '事件时间线', action: () => { closeCmd(); nav('activity'); } },
     { icon: '🌓', text: '切换主题', sub: '深色/浅色', action: () => { closeCmd(); toggleTheme(); } },
   ];
