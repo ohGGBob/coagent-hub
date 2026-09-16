@@ -1090,8 +1090,18 @@ const timeAgo = (s) => { if (!s) return ''; const diff = (Date.now() - new Date(
 const shortId = (id) => String(id || '').slice(0, 8);
 const toast = (msg, type = '') => { const t = $('toast'); t.textContent = msg; t.className = 'show ' + type; clearTimeout(t._t); t._t = setTimeout(() => { t.className = ''; }, 3000); };
 
-/* ---------- CSV 导出（团队报告，零依赖） ---------- */
-function downloadCSV(filename, rows) {
+/* ---------- @提及判定：消息里有没有 @我（名字或 ID） ---------- */
+function atMentionsMe(text) {
+  if (!text) return false;
+  const targets = [ME?.name, ME?.userId].filter(Boolean);
+  return targets.some((n) => {
+    if (!n) return false;
+    const re = new RegExp('(^|[^\\w])@' + n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '($|[^\\w])');
+    return re.test(text);
+  });
+}
+
+/* ---------- CSV 导出（团队报告，零依赖） ---------- */function downloadCSV(filename, rows) {
   const csv = rows.map((r) => r.map((c) => {
     const s = String(c ?? '');
     return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
@@ -1419,6 +1429,11 @@ function connectWS() {
         if (PAGE === 'messages') appendMsgBubble(msg);
         else { MSG_UNREAD++; updateMsgBadge(); }
         if (VOICE_ENABLED && msg.authorId !== ME.userId) speakText((msg.payload?.text || ''));
+        // 被 @ 提醒：必达（三音上行 + 桌面通知，页面可见也弹）
+        if (msg.authorId !== ME.userId && atMentionsMe(msg.payload?.text)) {
+          playPing(true);
+          if (DESKTOP_NOTIF) showDesktopNotif('@你 的新消息', (msg.payload?.text || '').slice(0, 60));
+        }
       }
       // 桌面通知：重要事件（页面不可见时）或「关注任务」的变更（必达，可见也弹）
       if (DESKTOP_NOTIF && (document.visibilityState !== 'visible' || followedNow)) {
@@ -1530,6 +1545,10 @@ function renderDashboard() {
   const s = CACHE.stats || {};
   const ts = s.tasks || { byStatus: {}, byPriority: {}, overdue: 0 };
   const openTasks = (ts.byStatus?.open || 0), claimed = (ts.byStatus?.claimed || 0), done = (ts.byStatus?.done || 0);
+  // 我的任务（我负责的未完成 + 我完成的）
+  const myTasks = CACHE.tasks.filter((t) => t.assignee === ME.userId);
+  const myOpen = myTasks.filter((t) => t.status !== 'done').length;
+  const myDone = myTasks.length - myOpen;
 
   // 活动趋势（近 14 天，服务端统计）
   const daily = (s.daily || []).map((d) => ({ label: d.label, value: d.count, color: 'var(--accent)' }));
@@ -1578,6 +1597,20 @@ function renderDashboard() {
       <div class="stat-card info" data-ic="💭" data-tone="info"><div class="label">评论</div><div class="value tick" data-target="${s.comments?.total || 0}">${s.comments?.total || 0}</div><div class="sub">任务 + PR 讨论</div></div>
       <div class="stat-card" data-ic="🌿" data-tone="accent"><div class="label">活跃分支</div><div class="value tick" data-target="${CACHE.branches.length}">${CACHE.branches.length}</div><div class="sub">WS 连接 ${s.wsConnections || 0}</div></div>
       <div class="stat-card" data-ic="📁" data-tone="accent"><div class="label">共享文件</div><div class="value tick" data-target="${s.files?.total || 0}">${s.files?.total || 0}</div><div class="sub">占用 ${fmtBytes(s.files?.size || 0)}</div></div>
+    </div>
+    <div class="card" style="margin-bottom:16px">
+      <div class="card-title"><span>🎯 我的任务</span><span class="card-badge">${myOpen + myDone} 项（待办 ${myOpen}）</span><button class="btn ghost sm" style="margin-left:auto" onclick="nav('tasks')">全部任务 →</button></div>
+      ${myTasks.length ? `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:8px">
+        ${myTasks.map((t) => `<div class="task-card" data-priority="${t.priority || 'medium'}" style="cursor:pointer" onclick="openTaskDetail('${t.id}')">
+          <div class="t-top">
+            <span class="chip ${t.priority || 'medium'}">${PRIORITY_LABELS[t.priority] || '中'}</span>
+            <span class="chip ${t.status === 'done' ? 'ok' : t.status === 'claimed' ? 'warn' : ''}">${t.status === 'done' ? '已完成' : t.status === 'claimed' ? '进行中' : '待认领'}</span>
+            ${t.dueDate && t.status !== 'done' && Date.parse(t.dueDate) < Date.now() ? '<span class="chip err">逾期</span>' : ''}
+          </div>
+          <div class="t-title">${esc(t.title)}</div>
+          <div class="t-meta"><span>${t.dueDate ? `📅 ${t.dueDate.slice(0,10)}` : timeAgo(t.createdAt)}</span>${FOLLOWING.has(t.id) ? '<span>🔔</span>' : ''}</div>
+        </div>`).join('')}
+      </div>` : '<div class="empty" style="padding:18px"><div class="text">你还没有负责的任务——去任务板认领一个吧</div></div>'}
     </div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
       <div class="card chart-card">
@@ -1674,6 +1707,7 @@ let TASK_PRIORITY = '';
 let FOLLOWING = new Set();
 try { FOLLOWING = new Set(JSON.parse(localStorage.getItem('coagent_following_v1') || '[]')); } catch { FOLLOWING = new Set(); }
 let TASK_FOLLOW_FILTER = false;
+let TASK_MINE_FILTER = false;
 /* 分析页聚焦成员（成员在线卡 📈 直达） */
 let ANALYTICS_FOCUS = '';
 function saveFollowing() { localStorage.setItem('coagent_following_v1', JSON.stringify([...FOLLOWING])); }
@@ -1688,6 +1722,7 @@ function renderTasks() {
   let tasks = CACHE.tasks;
   if (TASK_PRIORITY) tasks = tasks.filter((t) => t.priority === TASK_PRIORITY);
   if (TASK_FOLLOW_FILTER) tasks = tasks.filter((t) => FOLLOWING.has(t.id));
+  if (TASK_MINE_FILTER) tasks = tasks.filter((t) => t.assignee === ME.userId);
   const open = tasks.filter((t) => t.status === 'open');
   const claimed = tasks.filter((t) => t.status === 'claimed');
   const done = tasks.filter((t) => t.status === 'done');
@@ -1713,6 +1748,7 @@ function renderTasks() {
         </select>
         <button class="btn ghost sm" onclick="toggleBatchMode()">${BATCH_MODE ? '✓ 退出批量' : '☐ 批量操作'}</button>
         <button class="btn ghost sm" onclick="TASK_FOLLOW_FILTER=!TASK_FOLLOW_FILTER;renderTasks()" title="只看已关注的任务">${TASK_FOLLOW_FILTER ? '🔔 关注中' : '🔕 只看关注'}</button>
+        <button class="btn ghost sm" onclick="TASK_MINE_FILTER=!TASK_MINE_FILTER;renderTasks()" title="只看我负责的任务">${TASK_MINE_FILTER ? '🙋 我的任务' : '🙋 只看我的'}</button>
         ${BATCH_MODE && BATCH_SELECTED.size > 0 ? `
           <span style="font-size:12px;color:var(--accent)">已选 ${BATCH_SELECTED.size} 项</span>
           <button class="btn sm" onclick="batchAction('claim')">🤝 批量认领</button>
@@ -2058,7 +2094,9 @@ async function renderMessages() {
         <div class="msg-stream" id="msg-stream">
           ${list.length ? msgListHTML(list) : '<div class="empty-chan">还没有消息，打个招呼吧 👋</div>'}
         </div>
-        <div class="msg-inputbar">
+        <div class="msg-inputbar" style="position:relative">
+          <div id="mention-pop" style="display:none;position:absolute;bottom:calc(100% + 6px);left:0;right:0;background:var(--bg-elev);border:1px solid var(--border);border-radius:10px;padding:6px;max-height:190px;overflow:auto;z-index:50;box-shadow:var(--shadow)"></div>
+          <button class="btn ghost sm" onclick="toggleMention()" title="提及成员">@</button>
           <input class="input" id="msg-input" placeholder="发消息到 #${esc(MSG_CHANNEL)} …"
                  onkeydown="if(event.key==='Enter'){sendMsg()}">
           <button class="btn" onclick="sendMsg()">发送</button>
@@ -2070,6 +2108,25 @@ async function renderMessages() {
   $('msg-input').focus();
 }
 function switchChannel(ch) { MSG_CHANNEL = ch; renderMessages(); }
+/* @提及：成员浮层（普通成员也能看到全员姓名/ID 概要） */
+function toggleMention() {
+  const pop = $('mention-pop');
+  if (!pop) return;
+  if (pop.style.display !== 'none') { pop.style.display = 'none'; return; }
+  const members = (CACHE.stats?.members || []).filter((m) => m.name || m.id);
+  pop.innerHTML = members.length ? members.map((m) =>
+    `<div style="padding:6px 8px;cursor:pointer;border-radius:6px;font-size:12px" onmouseover="this.style.background='var(--bg-hover)'" onmouseout="this.style.background=''" onclick="insertMention('${esc(m.name || m.id)}')">${esc(m.name || m.id)} <span style="color:var(--text-mute);font-family:var(--mono);font-size:10px">${esc(m.id)}</span></div>`
+  ).join('') : '<div style="padding:8px;font-size:12px;color:var(--text-mute)">暂无成员</div>';
+  pop.style.display = '';
+}
+function insertMention(name) {
+  const input = $('msg-input');
+  if (!input) return;
+  const at = '@' + name + ' ';
+  input.value = (input.value.trim() ? input.value.trim() + ' ' : '') + at;
+  input.focus();
+  const pop = $('mention-pop'); if (pop) pop.style.display = 'none';
+}
 async function sendMsg() {
   const input = $('msg-input');
   const text = input.value.trim();
@@ -2077,6 +2134,9 @@ async function sendMsg() {
   input.value = '';
   try {
     await api('POST', '/messages', { text, channel: MSG_CHANNEL });
+    // 提及成员提示（发送端确认对方会收到 @ 必达提醒）
+    const mentioned = (CACHE.stats?.members || []).filter((m) => m.name && m.id !== ME.userId && new RegExp('@' + m.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).test(text));
+    if (mentioned.length) toast(`已提及 ${mentioned.map((m) => m.name).join('、')}`, 'ok');
     // WS 会推回自己发的消息并追加气泡；网络不佳时这里兜底重拉
     setTimeout(() => { if (PAGE === 'messages') loadMessages().then(() => { if (PAGE === 'messages') renderMessages(); }); }, 800);
   } catch (e) {
@@ -3449,8 +3509,9 @@ function notifyPush(ev) {
   const p = ev.payload || {};
   const relTask = p.taskId || ((ev.type === 'task.created' || ev.type === 'task.updated') ? p.id : null);
   const followed = !!relTask && FOLLOWING.has(relTask);
+  const atMe = ev.type === 'message.posted' && atMentionsMe(p.text);
   NOTIFS = NOTIFS.filter((n) => n.seq !== ev.seq);
-  NOTIFS.unshift({ seq: ev.seq, type: ev.type, authorId: ev.authorId, ts: ev.ts, payload: ev.payload, read: false, followed });
+  NOTIFS.unshift({ seq: ev.seq, type: ev.type, authorId: ev.authorId, ts: ev.ts, payload: ev.payload, read: false, followed, atMe });
   saveNotifs();
   UNREAD_COUNT = NOTIFS.filter((n) => !n.read).length;
   updateNotifDot();
@@ -3475,7 +3536,7 @@ function toggleNotif() {
       return `<div class="notif-item ${n.read ? '' : 'unread'}" onclick="notifOpen('${esc(n.type)}')">
         <div class="n-icon">${m.icon}</div>
         <div class="n-body">
-          <div class="n-text">${n.followed ? '<span class="chip accent" style="font-size:9px;margin-right:4px">📌 关注</span>' : ''}${esc(m.text)}</div>
+          <div class="n-text">${n.atMe ? '<span class="chip warn" style="font-size:9px;margin-right:4px">@我</span>' : ''}${n.followed ? '<span class="chip accent" style="font-size:9px;margin-right:4px">📌 关注</span>' : ''}${esc(m.text)}</div>
           <div class="n-meta">${esc(n.authorId)} · ${timeAgo(n.ts)}${n.read ? '' : ' <span class="chip err" style="font-size:9px">新</span>'}</div>
         </div>
       </div>`;
