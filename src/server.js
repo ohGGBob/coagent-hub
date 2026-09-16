@@ -664,22 +664,58 @@ export function createHub() {
     const ctxEntries = await context.query({ limit: 9999 });
     const allComments = readJsonlSafe(PATHS.comments);
     const usersById = loadUsers().reduce((m, u) => { m[u.id] = u; return m; }, {});
-    // 成员贡献榜：最近 7 天事件按作者统计（取 Top 8，展示活跃度）
-    const weekAgo = Date.now() - 7 * 86_400_000;
+    // 时间窗口：今天为基准，向前推（用本地日界，配合面板展示）
+    const now = new Date();
+    const dayKey = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    const daily = [];
+    const taskDoneDaily = [];
+    const doneAccum = [0];
+    for (let i = 13; i >= 0; i--) {
+      const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() - i);
+      daily.push({ date: dayKey(d), label: `${d.getMonth() + 1}/${d.getDate()}`, count: 0 });
+      taskDoneDaily.push({ date: dayKey(d), label: `${d.getMonth() + 1}/${d.getDate()}`, count: 0 });
+    }
+    const dailyIdx = Object.fromEntries(daily.map((d, i) => [d.date, i]));
+    // 成员×近 7 天热力图
+    const weekAgo = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 6);
+    const weekStartKey = dayKey(weekAgo);
+    const memberDaily = new Map(); // id -> [7]
     const contrib = new Map();
-    for (const ev of eventLog.since(0, 50_000)) {
+    for (const ev of eventLog.since(0, 100_000)) {
       if (!ev?.authorId) continue;
       const ts = Date.parse(ev.ts ?? ev.t ?? '');
-      if (!ts || ts < weekAgo) continue;
-      const cur = contrib.get(ev.authorId) ?? { count: 0, actions: {} };
-      cur.count++;
-      cur.actions[ev.type] = (cur.actions[ev.type] ?? 0) + 1;
-      contrib.set(ev.authorId, cur);
+      if (!ts) continue;
+      const d = new Date(ts);
+      const key = dayKey(d);
+      if (dailyIdx[key] !== undefined) daily[dailyIdx[key]].count++;
+      if (ev.type === 'task.updated' && ev.payload?.status === 'done') {
+        const idx = dailyIdx[key];
+        if (idx !== undefined) taskDoneDaily[idx].count++;
+      }
+      if (ts >= weekAgo.getTime()) {
+        const bucket = dailyIdx[key] - (14 - 7);
+        if (bucket >= 0 && bucket < 7) {
+          const md = memberDaily.get(ev.authorId) ?? [0, 0, 0, 0, 0, 0, 0];
+          md[bucket]++;
+          memberDaily.set(ev.authorId, md);
+        }
+        const cur = contrib.get(ev.authorId) ?? { count: 0, actions: {} };
+        cur.count++;
+        cur.actions[ev.type] = (cur.actions[ev.type] ?? 0) + 1;
+        contrib.set(ev.authorId, cur);
+      }
     }
+    // 燃尽累计
+    let acc = 0;
+    taskDoneDaily.forEach((d) => { acc += d.count; d.accum = acc; });
     const contributors = [...contrib.entries()]
       .map(([id, v]) => ({ id, name: usersById[id]?.name ?? id, count: v.count, actions: v.actions }))
       .sort((a, b) => b.count - a.count)
       .slice(0, 8);
+    const heatmap = [...memberDaily.entries()]
+      .map(([id, days]) => ({ id, name: usersById[id]?.name ?? id, days }))
+      .sort((a, b) => b.days.reduce((s, n) => s + n, 0) - a.days.reduce((s, n) => s + n, 0))
+      .slice(0, 6);
     return {
       tasks: taskStats,
       context: { total: ctxEntries.length, byType: ctxEntries.reduce((acc, e) => { acc[e.type] = (acc[e.type] ?? 0) + 1; return acc; }, {}) },
@@ -691,6 +727,10 @@ export function createHub() {
       wsConnections: bus?.count ?? 0,
       uptime: Math.floor((Date.now() - new Date(metrics.startedAt).getTime()) / 1000),
       contributors,
+      daily,
+      taskDoneDaily,
+      heatmap,
+      weekStart: weekStartKey,
     };
   });
 

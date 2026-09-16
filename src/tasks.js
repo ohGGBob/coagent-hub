@@ -255,7 +255,7 @@ export function createTaskStore({ eventLog, getReview }) {
     eventLog.append({
       type: 'task.updated',
       authorId: userId,
-      payload: { id: task.id, fields: Object.keys(patch) },
+      payload: { id: task.id, fields: Object.keys(patch), status: task.status },
     });
     return normalize(task);
   }

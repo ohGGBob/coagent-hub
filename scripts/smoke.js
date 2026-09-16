@@ -592,6 +592,26 @@ try {
     await rejects(() => new HubClient({ hubUrl, token: erinToken }).request('GET', '/admin/backups'), 403, '非管理员不能读备份列表');
   }
 
+  // ------------------------------------------------------------ 12.7 数据看板：趋势 / 燃尽 / 热力图
+  section('12.7 数据看板：趋势 / 燃尽 / 成员热力图');
+  {
+    const stats = await alice.request('GET', '/stats');
+    ok(Array.isArray(stats.daily) && stats.daily.length === 14, '/stats 返回近 14 天活动趋势');
+    ok(stats.daily.every((d) => d.label && typeof d.count === 'number'), '趋势条目含日期标签与计数');
+    ok(Array.isArray(stats.taskDoneDaily) && stats.taskDoneDaily.length === 14, '/stats 返回近 14 天任务燃尽');
+    ok(stats.taskDoneDaily.every((d) => typeof d.count === 'number' && typeof d.accum === 'number'), '燃尽条目含当日完成与累计');
+    ok(Array.isArray(stats.heatmap), '/stats 返回成员热力图');
+    if (stats.heatmap.length) {
+      ok(stats.heatmap[0].days.length === 7, '热力图成员覆盖 7 天');
+      ok(stats.heatmap[0].days.every((n) => typeof n === 'number' && n >= 0), '热力图天计数非负');
+    }
+    // 数据一致性：燃尽累计单调不减；且 done 事件数 ≥ 当前 done 任务数
+    // （冒烟 12.2 曾把任务 done 后再改回 open，故事件口径会略大于状态口径）
+    const accs = stats.taskDoneDaily.map((d) => d.accum);
+    ok(accs.every((v, i) => i === 0 || v >= accs[i - 1]), '燃尽累计单调不减');
+    ok(accs[13] >= stats.tasks.byStatus.done, `done 事件数不少于当前 done 任务数（${accs[13]} >= ${stats.tasks.byStatus.done}）`);
+  }
+
   // ------------------------------------------------------------ 13. 收尾一致性
   section('13. 一致性');
   const finalEvents = await alice.replay();

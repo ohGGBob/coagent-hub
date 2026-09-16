@@ -721,8 +721,7 @@ function donutChart(data, opts = {}) {
     const x2 = cx + r * Math.cos(a2), y2 = cy + r * Math.sin(a2);
     segments += `<path d="M ${cx} ${cy} L ${x1} ${y1} A ${r} ${r} 0 ${large} 1 ${x2} ${y2} Z" fill="${d.color}" opacity="0.85"/>`;
     angle = a2;
-  });
-  const legend = data.map((d) =>
+  });  const legend = data.map((d) =>
     `<div style="display:flex;align-items:center;gap:6px;font-size:12px;margin:3px 0">
       <span style="width:10px;height:10px;border-radius:2px;background:${d.color};display:inline-block"></span>
       <span style="color:var(--text-sub)">${d.label}</span>
@@ -737,6 +736,63 @@ function donutChart(data, opts = {}) {
       <text x="${cx}" y="${cy+14}" text-anchor="middle" fill="var(--text-mute)" font-size="10">总计</text>
     </svg>
     <div style="flex:1">${legend}</div>
+  </div>`;
+}
+
+/** 折线图（面积渐变 + 末值标注）—— 用于任务燃尽等累计趋势 */
+function lineChart(data, opts = {}) {
+  const w = opts.width || 320, h = opts.height || 140, pad = 30;
+  const vals = (data || []).map((d) => d.accum ?? d.value ?? 0);
+  if (!vals.length) return '<div class="empty"><div class="text">暂无数据</div></div>';
+  const max = Math.max(...vals, 1);
+  const step = (w - pad * 2) / (vals.length - 1 || 1);
+  const px = (i) => pad + i * step;
+  const py = (v) => h - pad - (v / max) * (h - pad * 2);
+  const pts = vals.map((v, i) => `${px(i).toFixed(1)},${py(v).toFixed(1)}`).join(' ');
+  const area = `${px(0).toFixed(1)},${h - pad} ${pts} ${px(vals.length - 1).toFixed(1)},${h - pad}`;
+  const dots = vals.map((v, i) =>
+    `<circle cx="${px(i).toFixed(1)}" cy="${py(v).toFixed(1)}" r="3" fill="var(--ok)">
+      <title>${data[i]?.label || ''}：${v}</title>
+    </circle>`).join('');
+  return `<svg viewBox="0 0 ${w} ${h}" xmlns="http://www.w3.org/2000/svg">
+    <line x1="${pad}" y1="${h-pad}" x2="${w-pad}" y2="${h-pad}" stroke="var(--border)" stroke-width="1"/>
+    <polygon points="${area}" fill="var(--ok)" opacity="0.12"/>
+    <polyline points="${pts}" fill="none" stroke="var(--ok)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round">
+      <animate attributeName="stroke-dasharray" from="0,1000" to="1000,0" dur="0.6s" fill="freeze"/>
+    </polyline>
+    ${dots}
+    ${(data || []).map((d, i) => i % 2 === 0 || i === vals.length - 1
+      ? `<text x="${px(i)}" y="${h - pad + 14}" text-anchor="middle" fill="var(--text-mute)" font-size="9">${d.label || ''}</text>` : '').join('')}
+    ${vals.length ? `<text x="${px(vals.length - 1) - 6}" y="${py(vals[vals.length - 1]) - 6}" text-anchor="end" fill="var(--ok)" font-size="11" font-weight="700">${vals[vals.length - 1]}</text>` : ''}
+  </svg>`;
+}
+
+/** 热力图（近 7 天 × 成员）—— 色阶深浅 = 活跃强度 */
+function heatmapChart(rows, dayLabels = []) {
+  if (!rows || !rows.length) return '<div class="empty"><div class="text">近 7 天还没有活跃记录</div></div>';
+  const max = Math.max(...rows.flatMap((r) => r.days), 1);
+  const cell = 18, gap = 4, headW = 96;
+  const w = headW + dayLabels.length * (cell + gap) + 6;
+  const h = rows.length * (cell + gap) + 22;
+  const cells = rows.map((r, ri) => r.days.map((v, di) => {
+    const a = v ? 0.25 + 0.75 * (v / max) : 0.06;
+    return `<rect x="${headW + di * (cell + gap)}" y="${22 + ri * (cell + gap)}" width="${cell}" height="${cell}" rx="3"
+      fill="var(--ok)" opacity="${a.toFixed(2)}">
+      <title>${esc(r.name)} · ${dayLabels[di] || ''}：${v} 次</title>
+    </rect>`;
+  }).join('')).join('');
+  const names = rows.map((r, ri) =>
+    `<text x="${headW - 6}" y="${22 + ri * (cell + gap) + cell / 2 + 3}" text-anchor="end" fill="var(--text-sub)" font-size="10"
+      style="max-width:${headW - 10}px">${esc(r.name)}</text>`).join('');
+  const dlabels = dayLabels.map((d, di) =>
+    `<text x="${headW + di * (cell + gap) + cell / 2}" y="12" text-anchor="middle" fill="var(--text-mute)" font-size="9">${d}</text>`).join('');
+  return `<svg viewBox="0 0 ${w} ${h}" xmlns="http://www.w3.org/2000/svg" style="max-width:100%">
+    ${dlabels}${names}${cells}
+  </svg>
+  <div style="display:flex;align-items:center;gap:6px;font-size:11px;color:var(--text-mute);margin-top:6px">
+    <span>少</span>
+    ${[0.08, 0.35, 0.6, 0.85, 1].map((a) => `<span style="width:12px;height:12px;border-radius:2px;background:var(--ok);opacity:${a};display:inline-block"></span>`).join('')}
+    <span>多</span>
   </div>`;
 }
 
@@ -895,17 +951,32 @@ function renderDashboard() {
   const ts = s.tasks || { byStatus: {}, byPriority: {}, overdue: 0 };
   const openTasks = (ts.byStatus?.open || 0), claimed = (ts.byStatus?.claimed || 0), done = (ts.byStatus?.done || 0);
 
-  // 活动趋势（最近 7 天事件数）
-  const days = [];
-  for (let i = 6; i >= 0; i--) {
-    const d = new Date(); d.setDate(d.getDate() - i);
-    const key = d.toISOString().slice(0, 10);
-    const count = (CACHE.events || []).filter((e) => e.ts?.startsWith(key)).length;
-    days.push({ label: `${d.getMonth()+1}/${d.getDate()}`, value: count, color: 'var(--accent)' });
-  }
+  // 活动趋势（近 14 天，服务端统计）
+  const daily = (s.daily || []).map((d) => ({ label: d.label, value: d.count, color: 'var(--accent)' }));
+  // 任务燃尽（近 14 天累计完成）
+  const burn = s.taskDoneDaily || [];
+  // 成员活跃热力图（近 7 天 × 成员）
+  const heat = s.heatmap || [];
+  const heatLabels = (s.daily || []).slice(-7).map((d) => d.label);
+
+  // 首次运行欢迎横幅：用户 ≤2、无任务、无上下文时出现（可关闭，记 localStorage）
+  const fresh = (s.users || 0) <= 2 && (openTasks + claimed + done) === 0 && (s.context?.total || 0) === 0 && !localStorage.getItem('coagent-welcome-dismissed');
+  const banner = fresh ? `
+    <div class="card" style="background:linear-gradient(135deg,#0d1117 0%,#161b22 60%,#1a2e1f 100%);border:1px solid #23863655;display:flex;align-items:center;gap:16px;flex-wrap:wrap">
+      <div style="font-size:30px">🎉</div>
+      <div style="flex:1;min-width:220px">
+        <div style="font-size:15px;font-weight:700">欢迎来到 CoAgent Hub！三步让小组开工</div>
+        <div style="font-size:12px;color:var(--text-sub);margin-top:4px;line-height:1.7">
+          ① 去「接入向导」给同学开户 → ② 把接入卡片发给同学 → ③ 同学的 agent 用 <code style="font-family:var(--mono);background:#0d1117;border:1px solid #30363d;border-radius:4px;padding:0 5px">init / sync / push</code> 开始协作
+        </div>
+      </div>
+      <button class="btn" onclick="nav('onboard')">去接入向导 →</button>
+      <button class="btn ghost sm" onclick="localStorage.setItem('coagent-welcome-dismissed','1');renderDashboard()">✕ 关闭</button>
+    </div>` : '';
 
   $('content').innerHTML = `
     <div class="page-header"><h2>欢迎回来，${esc(ME.name)}</h2><p>协同中枢实时概览 · 最后更新 ${new Date().toLocaleTimeString('zh-CN',{hour12:false})}</p></div>
+    ${banner}
     <div class="stat-grid">
       <div class="stat-card"><div class="label">待认领任务</div><div class="value">${openTasks}</div><div class="sub">${claimed} 个进行中</div></div>
       <div class="stat-card ok"><div class="label">已完成任务</div><div class="value">${done}</div><div class="sub">累计完成</div></div>
@@ -917,9 +988,15 @@ function renderDashboard() {
     </div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
       <div class="card">
-        <div class="card-title">📈 近 7 天活动趋势</div>
-        <div class="chart-container">${barChart(days, { width: 340, height: 160 })}</div>
+        <div class="card-title">📈 近 14 天活动趋势</div>
+        <div class="chart-container">${barChart(daily, { width: 340, height: 160 })}</div>
       </div>
+      <div class="card">
+        <div class="card-title">🔥 任务燃尽（近 14 天累计完成）</div>
+        <div class="chart-container">${lineChart(burn, { width: 340, height: 160 })}</div>
+      </div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:0">
       <div class="card">
         <div class="card-title">🎯 任务状态分布</div>
         ${donutChart([
@@ -927,6 +1004,10 @@ function renderDashboard() {
           { label: '进行中', value: claimed, color: 'var(--warn)' },
           { label: '已完成', value: done, color: 'var(--ok)' },
         ], { size: 130 })}
+      </div>
+      <div class="card">
+        <div class="card-title">🗓️ 成员活跃热力图（近 7 天）</div>
+        ${heatmapChart(heat, heatLabels)}
       </div>
     </div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:0">
