@@ -53,6 +53,8 @@ const warn = (s) => color.yellow('⚠ ' + s);
 const info = (s) => color.cyan('→ ' + s);
 const hr = () => color.gray('─'.repeat(56));
 const shortId = (id) => String(id || '').slice(0, 8);
+/** 人类可读文件大小 */
+const fmtSize = (n) => (n < 1024 ? n + ' B' : n < 1024 * 1024 ? (n / 1024).toFixed(1) + ' KB' : (n / 1024 / 1024).toFixed(1) + ' MB');
 
 /** 需要本机 git 的命令（其余命令纯走 HTTP，无 git 也能用） */
 const GIT_NEEDED = new Set(['init', 'pull', 'push', 'status', 'sync']);
@@ -112,10 +114,19 @@ function parseArgs(argv) {
     if (a.startsWith('--')) {
       const next = argv[i + 1];
       // 下一个元素是另一个 flag 或不存在时，当前 flag 视为布尔标记（值为 true）
-      if (next == null || String(next).startsWith('--')) {
+      if (next == null || String(next).startsWith('-')) {
         flags.set(a.slice(2), 'true');
       } else {
         flags.set(a.slice(2), next);
+        i++;
+      }
+    } else if (a.startsWith('-') && a.length === 2) {
+      // 单短横短旗：-o <path> / -q <词> / -y 等
+      const next = argv[i + 1];
+      if (next == null || String(next).startsWith('-')) {
+        flags.set(a[1], 'true');
+      } else {
+        flags.set(a[1], next);
         i++;
       }
     } else {
@@ -388,7 +399,7 @@ export async function run(argv) {
       }
     },
 
-    /** 全局搜索（任务 + 上下文） */
+    /** 全局搜索（任务 + 上下文 + 文件 + 消息） */
     async search() {
       const cfg = loadConfig(dir);
       const client = clientFor(cfg);
@@ -406,7 +417,80 @@ export async function run(argv) {
         log(color.bold('\n💬 上下文：'));
         for (const c of r.context) log(`  ${color.magenta(shortId(c.id))} [${c.type}] ${c.title} — ${c.authorId}`);
       }
-      if (!r.tasks?.length && !r.context?.length) log(color.gray('  无匹配结果'));
+      if (r.files?.length) {
+        log(color.bold('\n📁 文件：'));
+        for (const f of r.files) log(`  ${color.magenta(shortId(f.id))} ${f.title}${f.snippet ? ' — ' + f.snippet : ''}（${fmtSize(f.size)}）`);
+      }
+      if (r.messages?.length) {
+        log(color.bold('\n💬 消息：'));
+        for (const m of r.messages) log(`  #${m.id} ${m.title} — ${m.authorId}`);
+      }
+      if (!r.tasks?.length && !r.context?.length && !r.files?.length && !r.messages?.length) log(color.gray('  无匹配结果'));
+    },
+
+    /** 共享文件中心：跨电脑传文件（push/get/list/rm） */
+    async file() {
+      const sub = positional[0];
+      if (!sub) die('用法：file push|get|list|rm …（详见帮助）');
+      const cfg = fs.existsSync(path.join(dir, CONFIG_NAME)) ? loadConfig(dir) : undefined;
+      const client = clientFor(cfg);
+      /** 前缀解析：支持 8 位短 id / 完整 id / 文件名 */
+      const resolveOne = async (key, what) => {
+        const { files: all } = await client.files.list();
+        const hits = all.filter((f) => f.id.startsWith(key) || f.filename === key);
+        if (!hits.length) die(`没有匹配的${what}：${key}`);
+        if (hits.length > 1) die(`前缀有歧义，命中 ${hits.length} 个${what}，请用更长的 id`);
+        return hits[0];
+      };
+      if (sub === 'push') {
+        const p = positional[1];
+        if (!p) die('用法：file push <本地文件路径> [--desc 描述]');
+        const filePath = path.resolve(p);
+        if (!fs.existsSync(filePath)) die(`文件不存在：${filePath}`);
+        const data = fs.readFileSync(filePath);
+        const { file: meta } = await client.files.upload({
+          name: path.basename(filePath),
+          data,
+          description: flags.get('desc'),
+          mimeType: undefined,
+        });
+        log(ok(`已上传到共享文件中心：${color.bold(meta.filename)}（${fmtSize(meta.size)}）`));
+        log(`  文件 ID：${color.magenta(meta.id)}`);
+        if (meta.description) log(`  描述：${meta.description}`);
+        log(info(`其他电脑取回：coagent.exe file get ${meta.id.slice(0, 8)}`));
+        log(info(`面板预览/删除：登录后进入「📁 文件」页`));
+      } else if (sub === 'get') {
+        const key = positional[1];
+        if (!key) die('用法：file get <文件id或前缀> [-o 保存路径]');
+        const meta = await resolveOne(key, '文件');
+        const { data, filename } = await client.files.download(meta.id);
+        const out = flags.get('o') ? path.resolve(flags.get('o')) : path.join(process.cwd(), filename);
+        fs.writeFileSync(out, data);
+        log(ok(`已取回 ${color.bold(filename)}（${fmtSize(data.length)}）→ ${color.bold(out)}`));
+      } else if (sub === 'list') {
+        const { files: all } = await client.files.list({ q: flags.get('q') });
+        log(hr());
+        log(color.bold(`📁 共享文件中心（${all.length} 个）`));
+        log(hr());
+        if (!all.length) return log(color.gray('  还没有文件。上传：coagent.exe file push ./report.pdf'));
+        for (const f of all) {
+          log(`  ${color.magenta(f.id.slice(0, 8))} ${color.bold(f.filename)} ${color.gray(fmtSize(f.size))} ${color.gray(f.uploadedBy)} ${color.gray((f.createdAt || '').slice(0, 10))}${f.description ? ' — ' + f.description.slice(0, 40) : ''}`);
+        }
+        log(hr());
+        log(info('取回：coagent.exe file get <id>；删除：coagent.exe file rm <id>'));
+      } else if (sub === 'rm') {
+        const key = positional[1];
+        if (!key) die('用法：file rm <文件id或前缀>');
+        const meta = await resolveOne(key, '文件');
+        if (flags.get('yes') !== 'true') {
+          log(warn(`确认删除「${meta.filename}」？加 ${color.cyan('--yes')} 确认。`));
+          die('已取消');
+        }
+        await client.files.remove(meta.id);
+        log(ok(`已删除：${color.bold(meta.filename)}`));
+      } else {
+        die(`未知子命令：${sub}（支持 push / get / list / rm）`);
+      }
     },
 
     /** 查看分支 diff */
@@ -495,7 +579,11 @@ CoAgent agent 命令行工具
   status        任务板 + 最近动态 + 分支差距
   sync          pull + status（推荐每天开工前）
   log           查看事件历史（--limit 30 --after <seq>）
-  search "关键词" 全局搜索任务和上下文
+  search "关键词" 全局搜索任务、上下文、文件、消息
+  file push <路径> 上传文件到共享中心（--desc 描述）
+  file get <id>  取回文件（-o 保存路径）
+  file list      列出共享文件（--q 关键词）
+  file rm <id>   删除共享文件（--yes 确认）
   watch         常驻监听事件（--interval 30m 定轮询；--live 1 加实时推送）
   whoami        查看当前身份
 

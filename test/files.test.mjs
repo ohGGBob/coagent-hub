@@ -79,3 +79,16 @@ test('list：按创建时间倒序', () => {
   const ids = store.list().map((m) => m.id);
   assert.ok(ids.indexOf(b.id) < ids.indexOf(a.id), '新文件应排前面');
 });
+
+test('description：存储往返 + 截断 + 搜索命中', () => {
+  const meta = store.store({ buffer: Buffer.from('x'), filename: 'report.pdf', uploadedBy: 'alice', description: '  季度营收分析  ' });
+  assert.equal(meta.description, '季度营收分析', '描述去除首尾空白');
+  assert.equal(store.get(meta.id).description, '季度营收分析');
+  const long = store.store({ buffer: Buffer.from('y'), filename: 'long.md', uploadedBy: 'alice', description: 'x'.repeat(600) });
+  assert.equal(long.description.length, 500, '超长描述截断到 500 字符');
+  const hits = store.list({ q: '营收' }).map((m) => m.id);
+  assert.ok(hits.includes(meta.id), '按描述关键词可搜到文件');
+  const byName = store.list({ q: 'REPORT' }).map((m) => m.id);
+  assert.ok(byName.includes(meta.id), '按文件名搜索不区分大小写');
+  assert.equal(store.list({ q: '不存在的词' }).length, 0);
+});

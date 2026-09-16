@@ -660,6 +660,63 @@ try {
   const finalBranches = (await alice.branch.list()).branches;
   ok(finalBranches.includes('dev/alice') && finalBranches.includes('dev/bob'), '分支全景完整');
 
+  // ------------------------------------------------------------ 13.5 文件中心 + 全局搜索 + CLI 文件
+  section('13.5 文件中心 / 全局搜索 / CLI 文件');
+  {
+    // 上传（带描述）
+    const up = await alice.files.upload({ name: 'smoke-报告.pdf', data: Buffer.from('smoke file body'), description: '冒烟上传的共享文件' });
+    const fid = up.file.id;
+    ok(fid.length === 36, '文件上传返回 UUID');
+    ok(up.file.description === '冒烟上传的共享文件', '文件描述保留');
+
+    // 列表 + 关键词过滤
+    const list = await alice.files.list();
+    ok(list.files.some((f) => f.id === fid), '文件出现在共享列表');
+    const byQ = await alice.files.list({ q: '冒烟上传' });
+    ok(byQ.files.some((f) => f.id === fid), '列表支持关键词过滤（描述命中）');
+
+    // 下载往返
+    const dl = await alice.files.download(fid);
+    ok(dl.data.toString() === 'smoke file body' && dl.filename.includes('smoke-报告'), '文件内容与文件名往返一致');
+
+    // 权限：非上传者不能删
+    await rejects(() => bob.files.remove(fid), 403, '非上传者不能删除文件');
+
+    // 事件与全局搜索
+    const ev = await alice.request('GET', '/events?type=file.uploaded&after=0&limit=50');
+    ok(ev.events.some((e) => e.payload?.id === fid), '文件上传事件已落盘');
+    const sr = await alice.search('冒烟上传');
+    ok(sr.files?.some((f) => f.id === fid), '/search 返回文件结果');
+
+    // 消息搜索
+    await alice.message('smoke-文件搜索专用词 xyzzy', { channel: 'smoke-chan' });
+    const sm = await alice.search('xyzzy');
+    ok(sm.messages?.some((m) => m.title.includes('xyzzy')), '/search 命中消息文本');
+
+    // /stats 文件统计
+    const st = await alice.request('GET', '/stats');
+    ok(st.files && typeof st.files.total === 'number' && st.files.size > 0, '/stats 返回文件统计');
+
+    // CLI file push / list / get / rm
+    const smokeFilePath = path.join(TMP_ROOT, 'cli-push.txt');
+    fs.writeFileSync(smokeFilePath, 'CLI push 内容');
+    const pushOut = await cli(['file', 'push', smokeFilePath, '--desc', 'CLI 推送的文件', '--dir', cliWork]);
+    ok(pushOut.includes('已上传到共享文件中心') && pushOut.includes('file get'), 'CLI file push 上传成功');
+    const cliFid = /文件 ID：([0-9a-f-]{36})/.exec(pushOut)?.[1];
+    ok(!!cliFid, 'CLI file push 打印文件 ID');
+    const listOut = await cli(['file', 'list', '--dir', cliWork]);
+    ok(listOut.includes('共享文件中心') && listOut.includes('cli-push.txt'), 'CLI file list 列出共享文件');
+    const dlPath = path.join(TMP_ROOT, 'cli-dl.txt');
+    const dlOut = await cli(['file', 'get', cliFid, '-o', dlPath, '--dir', cliWork]);
+    ok(fs.existsSync(dlPath) && dlOut.includes('已取回'), 'CLI file get 下载到本地');
+    ok(fs.readFileSync(dlPath, 'utf8') === 'CLI push 内容', 'CLI file get 内容一致');
+    const rmOut = await cli(['file', 'rm', cliFid, '--yes', '--dir', cliWork]);
+    ok(rmOut.includes('已删除'), 'CLI file rm 删除成功（--yes）');
+    const afterRm = await alice.files.list();
+    ok(!afterRm.files.some((f) => f.id === cliFid), 'CLI 删除后文件消失');
+    await alice.files.remove(fid); // 清理 alice 的上传
+  }
+
   // ------------------------------------------------------------ 14. 语义检索（mock Ollama）
   section('14. 语义检索（mock Ollama）');
   {

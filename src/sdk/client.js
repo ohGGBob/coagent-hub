@@ -53,7 +53,7 @@ export class HubClient {
   /**
    * @param {string} method
    * @param {string} path
-   * @param {{body?: any, raw?: Buffer, query?: Record<string, string|number|undefined>}} [opts]
+   * @param {{body?: any, raw?: Buffer, query?: Record<string, string|number|undefined>, headers?: Record<string, string|undefined>}} [opts]
    */
   async request(method, path, opts = {}) {
     const url = new URL(this.hubUrl + path);
@@ -71,6 +71,9 @@ export class HubClient {
     } else if (opts.body !== undefined) {
       init.headers['Content-Type'] = 'application/json';
       init.body = JSON.stringify(opts.body);
+    }
+    for (const [k, v] of Object.entries(opts.headers ?? {})) {
+      if (v !== undefined) init.headers[k] = v;
     }
 
     const res = await this._fetch(url, init);
@@ -201,8 +204,47 @@ export class HubClient {
     addComment: (id, body) => this.request('POST', `/reviews/${encodeURIComponent(id)}/comments`, { body: { body } }),
   };
 
-  /** 全局搜索（任务 + 上下文） */
+  /** 全局搜索（任务 + 上下文 + 文件 + 消息） */
   search = (q, limit = 20) => this.request('GET', '/search', { query: { q, limit } });
+
+  /** 共享文件中心：上传 / 下载 / 列表 / 删除（跨电脑打破信息壁垒） */
+  files = {
+    /** @param {{q?: string}} [filter] */
+    list: (filter = {}) => this.request('GET', '/files', { query: { q: filter.q } }),
+    /**
+     * 上传文件（原始二进制）。
+     * @param {{name: string, data: Buffer, description?: string, mimeType?: string}} input
+     */
+    upload: (input) =>
+      this.request('POST', '/files', {
+        raw: input.data,
+        headers: {
+          'X-Filename': encodeURIComponent(input.name),
+          'X-Description': input.description ? encodeURIComponent(input.description) : undefined,
+          'Content-Type': input.mimeType ?? 'application/octet-stream',
+        },
+      }),
+    /**
+     * 下载文件，返回 {data: Buffer, filename}。
+     * @param {string} id
+     */
+    download: async (id) => {
+      const res = await this._fetch(`${this.hubUrl}/files/${encodeURIComponent(id)}`, {
+        headers: { Authorization: `Bearer ${this.token}` },
+      });
+      if (!res.ok) {
+        const text = await res.text();
+        let msg = `HTTP ${res.status}`;
+        try { msg = JSON.parse(text).error?.message ?? msg; } catch { /* 非 JSON */ }
+        throw new HubError('HTTP_ERROR', msg, res.status);
+      }
+      const disp = res.headers.get('Content-Disposition') ?? '';
+      const m = /filename="([^"]+)"/.exec(disp);
+      const filename = m ? decodeURIComponent(m[1]) : 'file.bin';
+      return { data: Buffer.from(await res.arrayBuffer()), filename };
+    },
+    remove: (id) => this.request('DELETE', `/files/${encodeURIComponent(id)}`),
+  };
 
   /** 统计指标（仪表盘用） */
   stats = () => this.request('GET', '/stats');

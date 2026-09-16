@@ -476,6 +476,44 @@ body { text-rendering: optimizeLegibility; }
 .sys-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .sys-row > span:first-child { color: var(--text-mute); }
 
+/* 共享文件中心 */
+.file-row {
+  display: flex; gap: 12px; align-items: center; padding: 12px 8px; border-bottom: 1px solid var(--border);
+  transition: background var(--dur) var(--ease);
+}
+.file-row:last-child { border-bottom: none; }
+.file-row:hover { background: var(--bg-hover); }
+.file-ic {
+  width: 42px; height: 42px; border-radius: 12px; flex-shrink: 0; font-size: 19px;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--bg-hover); border: 1px solid var(--border);
+}
+.file-ic.ok { background: var(--ok-bg); border-color: var(--ok); }
+.file-ic.purple { background: var(--purple-bg); border-color: var(--purple); }
+.file-ic.info { background: var(--info-bg); border-color: var(--info); }
+.file-ic.warn { background: var(--warn-bg); border-color: var(--warn); }
+.file-ic.accent { background: var(--accent-bg); border-color: var(--accent-border); }
+.file-body { flex: 1; min-width: 0; }
+.file-name { font-weight: 600; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: flex; align-items: center; gap: 6px; }
+.file-desc { font-size: 11.5px; color: var(--text-sub); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.file-meta { display: flex; gap: 12px; font-size: 10.5px; color: var(--text-mute); margin-top: 4px; align-items: center; }
+.file-ops { display: flex; gap: 6px; flex-shrink: 0; }
+
+/* 全局搜索 */
+.search-item {
+  display: flex; gap: 10px; align-items: center; padding: 10px 4px; cursor: pointer;
+  border-bottom: 1px solid var(--border); transition: background var(--dur) var(--ease);
+}
+.search-item:last-child { border-bottom: none; }
+.search-item:hover { background: var(--bg-hover); }
+.search-item .s-title { font-weight: 600; font-size: 13px; word-break: break-word; }
+.search-item .s-snippet { font-size: 11.5px; color: var(--text-sub); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 60vw; }
+
+/* 用户在线状态点 */
+.user-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-mute); flex-shrink: 0; opacity: 0.5; }
+.user-dot.on { background: var(--ok); opacity: 1; box-shadow: 0 0 0 3px var(--ok-bg); animation: pulseDot 2s var(--ease) infinite; }
+@keyframes pulseDot { 0%, 100% { box-shadow: 0 0 0 3px var(--ok-bg); } 50% { box-shadow: 0 0 0 5px var(--ok-bg); } }
+
 /* 看板 */
 .board { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
 .board-col {
@@ -810,6 +848,8 @@ tr:hover td { background: var(--bg-hover); }
       <div class="nav-section">协作</div>
       <div class="nav-item" data-page="tasks" title="任务板" onclick="nav('tasks')"><span class="icon">✅</span><span>任务板</span><span class="badge" id="badge-tasks" style="display:none">0</span></div>
       <div class="nav-item" data-page="messages" title="消息" onclick="nav('messages')"><span class="icon">🗨️</span><span>消息</span><span class="badge" id="badge-msgs" style="display:none">0</span></div>
+      <div class="nav-item" data-page="files" title="共享文件中心" onclick="nav('files')"><span class="icon">📁</span><span>文件</span></div>
+      <div class="nav-item" data-page="search" title="全局搜索" onclick="nav('search')"><span class="icon">🔎</span><span>搜索</span></div>
       <div class="nav-item" data-page="context" title="共享上下文" onclick="nav('context')"><span class="icon">💬</span><span>共享上下文</span></div>
       <div class="nav-item" data-page="reviews" title="审核 / PR" onclick="nav('reviews')"><span class="icon">🔍</span><span>审核 / PR</span><span class="badge" id="badge-reviews" style="display:none">0</span></div>
       <div class="nav-item" data-page="branches" title="分支" onclick="nav('branches')"><span class="icon">🌿</span><span>分支</span></div>
@@ -830,9 +870,9 @@ tr:hover td { background: var(--bg-hover); }
   <div class="main">
     <div class="topbar">
       <div class="title" id="page-title">仪表盘</div>
-      <div class="search-trigger" onclick="openCmd()">
-        <span>🔍</span><span>搜索或执行命令…</span>
-        <span class="kbd kbd-hint">Ctrl K</span>
+      <div class="search-trigger" onclick="nav('search')">
+        <span>🔍</span><span>全局搜索…</span>
+        <span class="kbd kbd-hint">Ctrl K 命令</span>
       </div>
       <div class="spacer"></div>
       <div class="status-pill"><div class="dot" id="ws-dot"></div><span class="pill-label" id="ws-status">连接中…</span></div>
@@ -864,7 +904,7 @@ const TOKEN_KEY = 'coagent_token_v2';
 let TOKEN = sessionStorage.getItem(TOKEN_KEY) || '';
 let ME = null, HEALTH = null, PAGE = 'dashboard', WS = null;
 let WS_RECONNECT = 0, POLL_TIMER = null, LAST_SEQ = 0;
-let CACHE = { tasks: [], context: [], reviews: [], branches: [], users: [], events: [], messages: [], stats: null };
+let CACHE = { tasks: [], context: [], reviews: [], branches: [], users: [], events: [], messages: [], files: [], stats: null };
 let EMBED_BADGE = '🧠 检测中…';
 /* 消息页状态 */
 let MSG_CHANNEL = 'general';
@@ -1207,13 +1247,14 @@ let PERSONA_MAP = {};   // authorId -> {id, prompt}（全员人格，来自 /sta
 let PERSONA_LIB = [];   // 内置人格库缓存（用户管理页用）
 async function refreshAll() {
   try {
-    const [h, tasks, ctx, rev, br, stats] = await Promise.all([
+    const [h, tasks, ctx, rev, br, stats, files] = await Promise.all([
       api('GET', '/healthz'), api('GET', '/tasks'), api('GET', '/context?limit=50'),
       api('GET', '/reviews'), api('GET', '/branches'), api('GET', '/stats'),
+      api('GET', '/files'),
     ]);
     HEALTH = h; LAST_SEQ = h.lastSeq; updateSeq();
     CACHE.tasks = tasks.tasks; CACHE.context = ctx.entries; CACHE.reviews = rev.reviews;
-    CACHE.branches = br.branches; CACHE.stats = stats;
+    CACHE.branches = br.branches; CACHE.stats = stats; CACHE.files = files.files || [];
     PERSONA_MAP = stats.personas || {};
     if (stats.onlineUsers) $('online-count').textContent = stats.onlineUsers.length;
     loadEmbedBadge();
@@ -1243,11 +1284,12 @@ function updateBadges() {
 function nav(page) {
   PAGE = page;
   document.querySelectorAll('.nav-item').forEach((el) => el.classList.toggle('active', el.dataset.page === page));
-  $('page-title').textContent = { dashboard:'仪表盘', tasks:'任务板', messages:'消息', context:'共享上下文', reviews:'审核 / PR', branches:'分支管理', activity:'活动流', tutorial:'协作教程', onboard:'接入向导', users:'用户管理', settings:'设置' }[page] || page;
+  $('page-title').textContent = { dashboard:'仪表盘', tasks:'任务板', messages:'消息', files:'共享文件', search:'全局搜索', context:'共享上下文', reviews:'审核 / PR', branches:'分支管理', activity:'活动流', tutorial:'协作教程', onboard:'接入向导', users:'用户管理', settings:'设置' }[page] || page;
   renderCurrent();
 }
 function renderCurrent() {
-  ({ dashboard: renderDashboard, tasks: renderTasks, messages: renderMessages, context: renderContext, reviews: renderReviews,
+  ({ dashboard: renderDashboard, tasks: renderTasks, messages: renderMessages, files: renderFiles, search: renderSearch,
+     context: renderContext, reviews: renderReviews,
      branches: renderBranches, activity: renderActivity, tutorial: renderTutorial, onboard: renderOnboard, users: renderUsers, settings: renderSettings }[PAGE] || renderDashboard)();
   // 页面切换动画 + 数字滚动
   const c = $('content');
@@ -1330,6 +1372,7 @@ function renderDashboard() {
       <div class="stat-card err" data-ic="⏰" data-tone="err"><div class="label">逾期任务</div><div class="value tick" data-target="${ts.overdue || 0}">${ts.overdue || 0}</div><div class="sub">需关注</div></div>
       <div class="stat-card info" data-ic="💭" data-tone="info"><div class="label">评论</div><div class="value tick" data-target="${s.comments?.total || 0}">${s.comments?.total || 0}</div><div class="sub">任务 + PR 讨论</div></div>
       <div class="stat-card" data-ic="🌿" data-tone="accent"><div class="label">活跃分支</div><div class="value tick" data-target="${CACHE.branches.length}">${CACHE.branches.length}</div><div class="sub">WS 连接 ${s.wsConnections || 0}</div></div>
+      <div class="stat-card" data-ic="📁" data-tone="accent"><div class="label">共享文件</div><div class="value tick" data-target="${s.files?.total || 0}">${s.files?.total || 0}</div><div class="sub">占用 ${fmtBytes(s.files?.size || 0)}</div></div>
     </div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
       <div class="card chart-card">
@@ -1992,7 +2035,10 @@ function renderContext() {
         ${e.body ? `<div class="ctx-body">${renderMarkdown(e.body)}</div>` : ''}
         ${e.attachments && e.attachments.length ? `
           <div style="display:flex;flex-wrap:wrap;gap:6px;margin:8px 0">
-            ${e.attachments.map((fid) => `<a href="/files/${fid}" target="_blank" class="chip" style="text-decoration:none;cursor:pointer">📎 附件 ${fid.slice(0,6)}</a>`).join('')}
+            ${e.attachments.map((fid) => {
+              const f = CACHE.files.find((x) => x.id === fid);
+              return `<a href="/files/${fid}" target="_blank" class="chip" style="text-decoration:none;cursor:pointer">📎 ${f ? esc(f.filename) : '附件 ' + fid.slice(0, 6)}</a>`;
+            }).join('')}
           </div>` : ''}
         ${e.links && e.links.length ? `
           <div style="font-size:12px;margin:4px 0">${e.links.map((l) => `<a href="${esc(l)}" target="_blank" style="color:var(--accent);margin-right:8px">🔗 ${esc(l)}</a>`).join('')}</div>` : ''}
@@ -2049,13 +2095,11 @@ function updatePendingFiles() {
     ).join('');
   } else el.textContent = '';
 }
-async function uploadFile(file) {
+async function uploadFile(file, description) {
   const buf = await file.arrayBuffer();
-  const res = await fetch('/files', {
-    method: 'POST',
-    headers: { 'Authorization': 'Bearer ' + TOKEN, 'Content-Type': file.type || 'application/octet-stream', 'X-Filename': encodeURIComponent(file.name) },
-    body: buf,
-  });
+  const headers = { 'Authorization': 'Bearer ' + TOKEN, 'Content-Type': file.type || 'application/octet-stream', 'X-Filename': encodeURIComponent(file.name) };
+  if (description) headers['X-Description'] = encodeURIComponent(description);
+  const res = await fetch('/files', { method: 'POST', headers, body: buf });
   if (!res.ok) throw new Error('HTTP ' + res.status);
   return (await res.json()).file;
 }
@@ -2179,6 +2223,184 @@ async function viewDiff(branch) {
 }
 
 /* ============================================================
+   共享文件中心（上传 / 预览 / 下载 / 删除 / 筛选）
+   ============================================================ */
+let FILE_FILTER = 'all';       // all|image|video|audio|archive|doc|code|other
+let FILE_SEARCH = '';          // 文件页内搜索词
+const FILE_KIND = {
+  image:   { icon: '🖼️', tone: 'ok' },
+  video:   { icon: '🎬', tone: 'purple' },
+  audio:   { icon: '🎵', tone: 'info' },
+  archive: { icon: '🗜️', tone: 'warn' },
+  doc:     { icon: '📄', tone: 'accent' },
+  code:    { icon: '💻', tone: 'info' },
+  other:   { icon: '📎', tone: '' },
+};
+function fileKind(mimeType, filename) {
+  const m = String(mimeType || '').toLowerCase();
+  if (m.startsWith('image/')) return 'image';
+  if (m.startsWith('video/')) return 'video';
+  if (m.startsWith('audio/')) return 'audio';
+  const ext = String(filename || '').toLowerCase().split('.').pop();
+  if (['zip', 'gz', 'tar', '7z', 'rar', 'bz2', 'xz'].includes(ext)) return 'archive';
+  if (['doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'pdf'].includes(ext)) return 'doc';
+  if (['js', 'ts', 'py', 'go', 'rs', 'java', 'c', 'cpp', 'h', 'hpp', 'sh', 'mjs', 'cjs', 'json', 'yaml', 'yml', 'toml', 'html', 'css', 'sql', 'md', 'txt'].includes(ext)) return 'code';
+  return 'other';
+}
+function renderFiles() {
+  const stats = CACHE.stats?.files || { total: 0, size: 0, byType: {} };
+  const q = FILE_SEARCH.trim().toLowerCase();
+  const list = CACHE.files.filter((f) => {
+    if (FILE_FILTER !== 'all' && fileKind(f.mimeType, f.filename) !== FILE_FILTER) return false;
+    if (q && !f.filename.toLowerCase().includes(q) && !(f.description || '').toLowerCase().includes(q)) return false;
+    return true;
+  });
+  const kindChips = ['all', 'image', 'doc', 'code', 'video', 'audio', 'archive', 'other'];
+  const kindLabel = { all: '全部', image: '🖼️ 图片', doc: '📄 文档', code: '💻 代码', video: '🎬 视频', audio: '🎵 音频', archive: '🗜️ 归档', other: '📎 其他' };
+  $('content').innerHTML = `
+    <div class="page-header"><h2>共享文件中心</h2><p>所有电脑的 agent 都能上传 / 取回 · 单文件上限 50MB</p></div>
+    <div class="card" id="upload-card" style="border-style:dashed;border-color:var(--accent-border);background:var(--bg-elev)" ondragover="event.preventDefault();this.style.borderColor='var(--accent)'" ondragleave="this.style.borderColor='var(--accent-border)'" ondrop="dropFileUpload(event)">
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+        <input type="file" id="fl-file" style="flex:2;min-width:220px" onchange="flDesc.focus()">
+        <input class="input" id="fl-desc" placeholder="描述（可选，别人更容易搜到）" style="flex:3;min-width:200px">
+        <button class="btn" id="fl-btn" onclick="doUpload()">⬆️ 上传</button>
+      </div>
+      <p style="font-size:11px;color:var(--text-mute);margin-top:8px">也可以把文件直接拖进这个框 · 上传即对全组可见（消息流会广播）</p>
+    </div>
+    <div class="stat-grid" style="grid-template-columns:repeat(auto-fit,minmax(130px,1fr))">
+      <div class="stat-card" data-ic="📁" data-tone="accent"><div class="label">共享文件</div><div class="value tick" data-target="${stats.total}">${stats.total}</div><div class="sub">总占用 ${fmtBytes(stats.size)}</div></div>
+      <div class="stat-card" data-ic="🖼️" data-tone="ok"><div class="label">图片</div><div class="value tick" data-target="${stats.byType.image || 0}">${stats.byType.image || 0}</div><div class="sub">${stats.byType.image ? '可预览' : '—'}</div></div>
+      <div class="stat-card" data-ic="📄" data-tone="accent"><div class="label">文档</div><div class="value tick" data-target="${stats.byType.doc || 0}">${stats.byType.doc || 0}</div><div class="sub">${stats.byType.archive || 0} 个归档</div></div>
+      <div class="stat-card" data-ic="💻" data-tone="info"><div class="label">代码/文本</div><div class="value tick" data-target="${stats.byType.code || 0}">${stats.byType.code || 0}</div><div class="sub">${stats.byType.other || 0} 个其他</div></div>
+    </div>
+    <div class="card">
+      <div class="form-row" style="margin-bottom:12px">
+        <input class="input" id="fl-q" placeholder="🔎 在文件名 / 描述中搜索…" value="${esc(FILE_SEARCH)}" style="flex:1" oninput="FILE_SEARCH=this.value;renderFiles()">
+      </div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px">
+        ${kindChips.map((k) => `<button class="chip ${FILE_FILTER === k ? 'accent' : ''}" style="cursor:pointer" onclick="FILE_FILTER='${k}';renderFiles()">${kindLabel[k]}</button>`).join('')}
+      </div>
+      ${list.length ? list.map((f) => fileRowHTML(f)).join('') : '<div class="empty"><div class="icon">📁</div><div class="text">没有匹配的文件</div></div>'}
+    </div>
+  `;
+  runTickers();
+}
+function fileRowHTML(f) {
+  const k = fileKind(f.mimeType, f.filename);
+  const ki = FILE_KIND[k];
+  const isMine = f.uploadedBy === ME.userId || (ME.scopes || []).includes('admin:write');
+  const isImage = String(f.mimeType || '').startsWith('image/');
+  return `<div class="file-row">
+    <div class="file-ic ${ki.tone}">${ki.icon}</div>
+    <div class="file-body">
+      <div class="file-name" title="${esc(f.filename)}">${esc(f.filename)} ${isImage ? '<span class="chip ok" style="font-size:9px">可预览</span>' : ''}</div>
+      ${f.description ? `<div class="file-desc">${esc(f.description)}</div>` : ''}
+      <div class="file-meta"><span>${fmtBytes(f.size)}</span><span>👤 ${esc(f.uploadedBy)} ${personaBadge(f.uploadedBy)}</span><span>🕐 ${timeAgo(f.createdAt)}</span></div>
+    </div>
+    <div class="file-ops">
+      ${isImage ? `<button class="btn ghost sm" onclick="filePreview('${f.id}')">👁 预览</button>` : ''}
+      <a class="btn ghost sm" style="text-decoration:none" href="/files/${f.id}" download="${esc(f.filename)}">⬇ 下载</a>
+      ${isMine ? `<button class="btn danger sm" onclick="delFile('${f.id}')">🗑</button>` : ''}
+    </div>
+  </div>`;
+}
+async function doUpload() {
+  const input = $('fl-file');
+  const file = input.files?.[0];
+  if (!file) return toast('请先选择文件', 'err');
+  const desc = $('fl-desc')?.value.trim() || undefined;
+  const btn = $('fl-btn');
+  const old = btn.innerHTML;
+  btn.innerHTML = '⏳ 上传中…'; btn.disabled = true;
+  try {
+    const meta = await uploadFile(file, desc);
+    toast(`✓ 已上传 ${meta.filename}`, 'ok');
+    input.value = ''; $('fl-desc').value = '';
+    refreshAll();
+  } catch (e) { toast('✗ 上传失败：' + e.message, 'err'); }
+  btn.innerHTML = old; btn.disabled = false;
+}
+function dropFileUpload(e) {
+  e.preventDefault();
+  const file = e.dataTransfer?.files?.[0];
+  if (!file) return;
+  const dt = new DataTransfer(); dt.items.add(file);
+  $('fl-file').files = dt.files;
+  $('fl-desc').focus();
+  toast(`已选择 ${file.name}，补个描述再点上传`, 'ok');
+}
+async function filePreview(id) {
+  try {
+    const res = await fetch('/files/' + id, { headers: { 'Authorization': 'Bearer ' + TOKEN } });
+    if (!res.ok) return toast('加载失败', 'err');
+    const blob = await res.blob();
+    if (!blob.type.startsWith('image/')) return toast('该类型不支持内联预览，请下载', 'err');
+    const url = URL.createObjectURL(blob);
+    showModal(`<h3>🖼️ ${esc(CACHE.files.find((f) => f.id === id)?.filename || '预览')}</h3>
+      <img src="${url}" style="max-width:100%;max-height:60vh;border-radius:12px;display:block;margin:0 auto" onload="setTimeout(()=>URL.revokeObjectURL('${url}'),60000)">
+      <div class="actions"><a class="btn" href="/files/${id}" download style="text-decoration:none">⬇ 下载原图</a><button class="btn ghost" onclick="closeModal()">关闭</button></div>`);
+  } catch (e) { toast('✗ ' + e.message, 'err'); }
+}
+function delFile(id) {
+  const f = CACHE.files.find((x) => x.id === id);
+  if (!confirm(`确定删除「${f?.filename || id}」？此操作不可恢复。`)) return;
+  api('DELETE', '/files/' + id).then(() => { toast('已删除', 'ok'); refreshAll(); }).catch((e) => toast('✗ ' + e.message, 'err'));
+}
+
+/* ============================================================
+   全局搜索（任务 / 上下文 / 文件 / 消息）
+   ============================================================ */
+let GS_QUERY = '';
+function renderSearch() {
+  $('content').innerHTML = `
+    <div class="page-header"><h2>全局搜索</h2><p>跨任务、共享上下文、文件、消息一站式检索</p></div>
+    <div class="card" style="padding:18px">
+      <div style="display:flex;gap:10px">
+        <input class="input" id="gs-q" placeholder="搜索任务 / 笔记 / 文件 / 消息…（Enter 搜索）" value="${esc(GS_QUERY)}" style="flex:1;padding:12px 14px;font-size:14px" onkeydown="if(event.key==='Enter')doSearch()">
+        <button class="btn" onclick="doSearch()">🔎 搜索</button>
+      </div>
+      ${GS_QUERY ? '' : '<p style="font-size:12px;color:var(--text-mute);margin-top:10px">输入关键词回车，四类结果分组展示。也支持在命令面板（Ctrl K）里直接搜。</p>'}
+    </div>
+    <div id="gs-results"></div>
+  `;
+  if (GS_QUERY) { $('gs-results').innerHTML = '<div class="card"><div class="skeleton" style="height:120px"></div></div>'; doSearch(); }
+  else setTimeout(() => $('gs-q')?.focus(), 50);
+}
+async function doSearch() {
+  const q = $('gs-q')?.value.trim() || GS_QUERY;
+  if (!q) return;
+  GS_QUERY = q;
+  const wrap = $('gs-results');
+  if (!wrap) return;
+  wrap.innerHTML = '<div class="card"><div class="skeleton" style="height:120px"></div></div>';
+  try {
+    const r = await api('GET', '/search?q=' + encodeURIComponent(q) + '&limit=10');
+    const sections = [];
+    if (r.tasks?.length) sections.push(searchSection('📋 任务', r.tasks.map((t) => `<div class="search-item" onclick="openTaskDetail('${t.id}')">
+      <span class="chip ${t.status === 'done' ? 'ok' : t.status === 'claimed' ? 'warn' : 'info'}">${t.status}</span>
+      <div><div class="s-title">${esc(t.title)}</div>${t.snippet ? `<div class="s-snippet">${esc(t.snippet)}</div>` : ''}</div></div>`).join('')));
+    if (r.context?.length) sections.push(searchSection('💬 共享上下文', r.context.map((c) => `<div class="search-item" onclick="nav('context')">
+      <span class="chip accent">${esc(c.type || 'note')}</span>
+      <div><div class="s-title">${esc(c.title)}</div>${c.snippet ? `<div class="s-snippet">${esc(c.snippet)}</div>` : ''}</div></div>`).join('')));
+    if (r.files?.length) sections.push(searchSection('📁 文件', r.files.map((f) => `<div class="search-item" onclick="nav('files')">
+      <span class="chip">${fmtBytes(f.size)}</span>
+      <div><div class="s-title">${esc(f.title)}</div>${f.snippet ? `<div class="s-snippet">${esc(f.snippet)}</div>` : ''}</div>
+      <a class="btn ghost sm" href="/files/${f.id}" download style="text-decoration:none">⬇</a></div>`).join('')));
+    if (r.messages?.length) sections.push(searchSection('💬 消息', r.messages.map((m) => `<div class="search-item" onclick="nav('messages')">
+      <span class="chip">#${esc(m.id)}</span>
+      <div><div class="s-title">${esc(m.title)}</div><div class="s-snippet">频道 ${esc(m.snippet || 'general')} · ${esc(m.authorId)}</div></div></div>`).join('')));
+    wrap.innerHTML = sections.length
+      ? sections.join('')
+      : `<div class="empty"><div class="icon">🔎</div><div class="text">没有找到与「${esc(q)}」相关的内容</div><div class="sub">换个关键词，或试试命令面板（Ctrl K）</div></div>`;
+  } catch (e) {
+    wrap.innerHTML = `<div class="empty"><div class="text">搜索失败：${esc(e.message)}</div></div>`;
+  }
+}
+function searchSection(title, body) {
+  return `<div class="card"><div class="card-title">${title}</div>${body}</div>`;
+}
+
+/* ============================================================
    活动流
    ============================================================ */
 async function renderActivity() {
@@ -2239,13 +2461,16 @@ async function renderUsers() {
     const { users } = await api('GET', '/users');
     const rows = users.map((u) => {
       const persona = u.persona;
+      const online = (CACHE.stats?.onlineUsers || []).includes(u.id);
       const personaCell = persona
         ? (() => {
             const lib = PERSONA_LIB.find((p) => p.id === persona.id);
             return `<span class="chip accent" title="${esc(persona.prompt)}">${lib ? lib.emoji + ' ' + lib.name : '✍️ 自定义'}</span>`;
           })()
         : '<span style="color:var(--text-mute);font-size:11px">—</span>';
-      return `<tr><td><code style="font-family:var(--mono)">${esc(u.id)}</code></td><td>${esc(u.name||'')}</td>
+      return `<tr><td><span style="display:inline-flex;align-items:center;gap:7px">
+        <span class="user-dot ${online ? 'on' : ''}" title="${online ? '在线' : '离线'}"></span>
+        <code style="font-family:var(--mono)">${esc(u.id)}</code></span></td><td>${esc(u.name||'')}</td>
         <td>${personaCell}</td>
         <td>${(u.scopes||[]).includes('admin:write') ? '<span class="chip err">管理员</span>' : '<span class="chip ok">agent</span>'}</td>
         <td><button class="btn ghost sm" onclick="editPersona('${u.id}', ${JSON.stringify(persona ?? null)})">🧠 人格</button>
@@ -2729,6 +2954,8 @@ async function filterCmd(q) {
   const actions = [
     { icon: '➕', text: '创建新任务', sub: '打开任务创建表单', action: () => { closeCmd(); nav('tasks'); } },
     { icon: '💬', text: '发布共享笔记', sub: '上下文上墙', action: () => { closeCmd(); nav('context'); } },
+    { icon: '📁', text: '上传共享文件', sub: '文件中心（跨电脑传文件）', action: () => { closeCmd(); nav('files'); } },
+    { icon: '🔎', text: '全局搜索', sub: '任务 / 笔记 / 文件 / 消息', action: () => { closeCmd(); nav('search'); } },
     { icon: '🔍', text: '发起 PR 审核', sub: '请求合入 main', action: () => { closeCmd(); nav('reviews'); } },
     { icon: '👤', text: '开户邀请同学', sub: '用户管理', action: () => { closeCmd(); nav('users'); } },
     { icon: '📊', text: '前往仪表盘', sub: '概览统计', action: () => { closeCmd(); nav('dashboard'); } },
@@ -2742,6 +2969,8 @@ async function filterCmd(q) {
       const r = await api('GET', `/search?q=${encodeURIComponent(q)}&limit=5`);
       for (const t of r.tasks || []) items.push({ icon: '✅', text: t.title, sub: `任务 · ${t.status} · ${t.priority}`, action: () => { closeCmd(); openTaskDetail(t.id); } });
       for (const c of r.context || []) items.push({ icon: '💬', text: c.title, sub: `上下文 · ${c.type} · ${c.authorId}`, action: () => { closeCmd(); nav('context'); } });
+      for (const f of r.files || []) items.push({ icon: '📁', text: f.title, sub: `文件 · ${f.snippet || '共享文件'}`, action: () => { closeCmd(); nav('files'); } });
+      for (const m of r.messages || []) items.push({ icon: '🗨️', text: m.title, sub: `消息 · ${m.authorId}`, action: () => { closeCmd(); nav('messages'); } });
     } catch {}
   }
   CMD_ITEMS = items; CMD_INDEX = 0;
@@ -2781,6 +3010,8 @@ function notifyMeta(ev) {
     'comment.posted':    { icon: '💭', text: `评论：${(p.preview || '').slice(0, 40)}`, page: 'reviews' },
     'branch.pushed':     { icon: '🚀', text: `推送 ${p.branch || ''}`, page: 'branches' },
     'branch.merged':     { icon: '🔀', text: `合并 ${p.branch || ''} → ${p.base || ''}`, page: 'branches' },
+    'file.uploaded':     { icon: '📁', text: `新文件：${p.filename || ''}`, page: 'files' },
+    'file.deleted':      { icon: '🗑', text: `删除文件：${p.filename || ''}`, page: 'files' },
     'message.posted':    { icon: '💬', text: `${p.text || ''}`.slice(0, 40), page: 'messages' },
     'agent.status':      { icon: '🤖', text: `agent 状态：${JSON.stringify(p)}`.slice(0, 40), page: 'activity' },
   };

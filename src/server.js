@@ -572,7 +572,7 @@ export function createHub() {
   });
 
   // ---------- 文件附件 ----------
-  add('GET', /^\/files$/, 'context:read', () => ({ files: files.list() }));
+  add('GET', /^\/files$/, 'context:read', ({ url }) => ({ files: files.list({ q: url.searchParams.get('q') ?? undefined }) }));
 
   add('GET', /^\/files\/([^/]+)$/, 'context:read', ({ params, res }) => {
     const { meta, data } = files.read(dec(params[0]));
@@ -583,23 +583,31 @@ export function createHub() {
     return { raw: data, contentType: meta.mimeType };
   });
 
-  // 原始二进制上传：Content-Type: application/octet-stream，X-Filename 指定文件名
+  // 原始二进制上传：Content-Type: application/octet-stream，X-Filename 指定文件名，X-Description 描述
   add('POST', /^\/files$/, 'context:write', ({ raw, req, user }) => {
     if (!raw?.length) throw badRequest('文件内容为空（需上传原始二进制）');
     const filename = decodeURIComponent(req.headers['x-filename'] ?? 'file');
+    const description = req.headers['x-description'] ? decodeURIComponent(req.headers['x-description']) : undefined;
     const mimeType = req.headers['content-type']?.split(';')[0] ?? 'application/octet-stream';
-    const meta = files.store({ buffer: raw, filename, mimeType, uploadedBy: user.id });
+    const meta = files.store({ buffer: raw, filename, mimeType, uploadedBy: user.id, description });
     eventLog.append({
       type: 'file.uploaded',
       authorId: user.id,
-      payload: { id: meta.id, filename: meta.filename, size: meta.size },
+      payload: { id: meta.id, filename: meta.filename, size: meta.size, description: meta.description },
     });
     return { file: meta };
   });
 
-  add('DELETE', /^\/files\/([^/]+)$/, 'context:write', ({ params, user }) =>
-    files.remove(dec(params[0]), user.id),
-  );
+  add('DELETE', /^\/files\/([^/]+)$/, 'context:write', ({ params, user }) => {
+    const meta = files.get(dec(params[0]));
+    const result = files.remove(dec(params[0]), user.id);
+    eventLog.append({
+      type: 'file.deleted',
+      authorId: user.id,
+      payload: { id: meta.id, filename: meta.filename, deletedBy: user.id },
+    });
+    return result;
+  });
 
   // ---------- 任务板 ----------
   add('GET', /^\/tasks$/, 'task:read', ({ url }) => ({
@@ -661,7 +669,7 @@ export function createHub() {
     comments.remove(dec(params[0]), user.id),
   );
 
-  // ---------- 全局搜索（任务 + 上下文 + 事件）----------
+  // ---------- 全局搜索（任务 + 上下文 + 文件 + 消息）----------
   add('GET', /^\/search$/, 'events:read', async ({ url }) => {
     const q = url.searchParams.get('q')?.trim();
     if (!q) throw badRequest('缺少搜索关键词 q');
@@ -672,7 +680,26 @@ export function createHub() {
     const ctxResults = (await context.query({ q, limit })).map((e) => ({
       kind: 'context', id: e.id, title: e.title, snippet: e.body?.slice(0, 120) ?? '', type: e.type, authorId: e.authorId,
     }));
-    return { query: q, tasks: taskResults, context: ctxResults, total: taskResults.length + ctxResults.length };
+    const ql = q.toLowerCase();
+    const fileResults = files.list({ q }).slice(0, limit).map((f) => ({
+      kind: 'file', id: f.id, title: f.filename, snippet: f.description ?? '', size: f.size, mimeType: f.mimeType, authorId: f.uploadedBy,
+    }));
+    // 消息是事件流里的 message.posted，文本检索走事件日志（最近 5000 条内扫）
+    const msgResults = eventLog.since(0, 5000)
+      .filter((ev) => ev.type === 'message.posted' && String(ev.payload?.text ?? '').toLowerCase().includes(ql))
+      .slice(-limit)
+      .map((ev) => ({
+        kind: 'message', id: String(ev.seq), title: String(ev.payload?.text ?? '').slice(0, 80),
+        snippet: ev.payload?.channel ?? 'general', authorId: ev.authorId, ts: ev.ts,
+      }));
+    return {
+      query: q,
+      tasks: taskResults,
+      context: ctxResults,
+      files: fileResults,
+      messages: msgResults,
+      total: taskResults.length + ctxResults.length + fileResults.length + msgResults.length,
+    };
   });
 
   // ---------- 统计（仪表盘用）----------
@@ -739,6 +766,15 @@ export function createHub() {
       context: { total: ctxEntries.length, byType: ctxEntries.reduce((acc, e) => { acc[e.type] = (acc[e.type] ?? 0) + 1; return acc; }, {}) },
       comments: { total: allComments.filter((c) => !c.deleted).length, byType: allComments.reduce((acc, c) => { if (!c.deleted) acc[c.type] = (acc[c.type] ?? 0) + 1; return acc; }, {}) },
       branches: { total: allBranches.length, protected: PROTECTED_BRANCHES.length },
+      files: (() => {
+        const all = files.list();
+        const byType = {};
+        for (const f of all) {
+          const t = files.classifyType(f.mimeType, f.filename);
+          byType[t] = (byType[t] ?? 0) + 1;
+        }
+        return { total: all.length, size: all.reduce((s, f) => s + f.size, 0), byType };
+      })(),
       users: loadUsers().length,
       onlineUsers: bus?.onlineUsers?.() ?? [],
       lastSeq: eventLog.lastSeq,

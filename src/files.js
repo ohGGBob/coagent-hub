@@ -111,10 +111,10 @@ export function createFileStore() {
 
   /**
    * 存储一个文件。
-   * @param {{buffer: Buffer, filename: string, mimeType?: string, uploadedBy: string}} input
+   * @param {{buffer: Buffer, filename: string, mimeType?: string, uploadedBy: string, description?: string}} input
    * @returns {FileMeta}
    */
-  function store({ buffer, filename, mimeType, uploadedBy }) {
+  function store({ buffer, filename, mimeType, uploadedBy, description }) {
     if (!buffer || !buffer.length) throw badRequest('文件内容为空');
     if (buffer.length > MAX_FILE_SIZE) {
       throw badRequest(`文件超过上限 ${Math.round(MAX_FILE_SIZE / 1024 / 1024)}MB`, { size: buffer.length, max: MAX_FILE_SIZE });
@@ -133,6 +133,7 @@ export function createFileStore() {
       size: buffer.length,
       mimeType: sanitizeMime(mimeType),
       uploadedBy,
+      description: String(description || '').trim().slice(0, 500) || undefined,
       createdAt: new Date().toISOString(),
     };
     const all = loadMeta();
@@ -168,11 +169,15 @@ export function createFileStore() {
   }
 
   /**
-   * 列出所有文件元数据。
+   * 列出所有文件元数据（按创建时间倒序，可选关键词过滤）。
+   * @param {{q?: string}} [filter]
    * @returns {FileMeta[]}
    */
-  function list() {
-    return Object.values(loadMeta()).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  function list(filter = {}) {
+    const q = String(filter.q ?? '').trim().toLowerCase();
+    return Object.values(loadMeta())
+      .filter((m) => !q || m.filename.toLowerCase().includes(q) || (m.description ?? '').toLowerCase().includes(q))
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   }
 
   /**
@@ -206,5 +211,23 @@ export function createFileStore() {
     return (bytes / 1024 / 1024 / 1024).toFixed(2) + ' GB';
   }
 
-  return { store, get, read, list, remove, formatSize, MAX_FILE_SIZE };
+  /**
+   * 把文件归入展示类别（面板筛选 / stats 分布用）。
+   * @param {string} mimeType
+   * @param {string} filename
+   * @returns {'image'|'video'|'audio'|'archive'|'doc'|'code'|'other'}
+   */
+  function classifyType(mimeType, filename) {
+    const m = String(mimeType ?? '').toLowerCase();
+    if (m.startsWith('image/')) return 'image';
+    if (m.startsWith('video/')) return 'video';
+    if (m.startsWith('audio/')) return 'audio';
+    const ext = path.extname(String(filename ?? '')).toLowerCase();
+    if (['.zip', '.gz', '.tar', '.7z', '.rar', '.bz2', '.xz'].includes(ext)) return 'archive';
+    if (['.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx', '.pdf'].includes(ext)) return 'doc';
+    if (['.js', '.ts', '.py', '.go', '.rs', '.java', '.c', '.cpp', '.h', '.hpp', '.sh', '.mjs', '.cjs', '.json', '.yaml', '.yml', '.toml', '.html', '.css', '.sql', '.md', '.txt'].includes(ext)) return 'code';
+    return 'other';
+  }
+
+  return { store, get, read, list, remove, formatSize, classifyType, MAX_FILE_SIZE };
 }
