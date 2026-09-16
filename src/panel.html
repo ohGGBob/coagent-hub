@@ -1036,9 +1036,9 @@ function toggleSound() {
   toast(SOUND_ENABLED ? '提示音已开启' : '提示音已关闭', 'ok');
   refreshAll();
 }
-/** 微信式轻提示音（WebAudio 合成，零资源依赖） */
+/** 微信式轻提示音（WebAudio 合成，零资源依赖）；followed=true 时用三音上行（关注必达音） */
 let _audioCtx = null;
-function playPing() {
+function playPing(followed) {
   if (!SOUND_ENABLED) return;
   try {
     _audioCtx = _audioCtx || new (window.AudioContext || window.webkitAudioContext)();
@@ -1053,8 +1053,8 @@ function playPing() {
       o.connect(g); g.connect(_audioCtx.destination);
       o.start(start); o.stop(start + dur + 0.02);
     };
-    mk(880, now, 0.16, 0.08);
-    mk(1318, now + 0.11, 0.2, 0.06);
+    if (followed) { mk(880, now, 0.14, 0.09); mk(1174, now + 0.1, 0.14, 0.08); mk(1760, now + 0.2, 0.22, 0.07); }
+    else { mk(880, now, 0.16, 0.08); mk(1318, now + 0.11, 0.2, 0.06); }
   } catch { /* 音频不可用则静默 */ }
 }
 function showDesktopNotif(title, body) {
@@ -1334,8 +1334,11 @@ function connectWS() {
       LAST_SEQ = Math.max(LAST_SEQ, msg.seq);
       updateSeq();
       notifyPush(msg);
-      // 提示音：他人产生的新事件（自己操作的回声不响）
-      if (SOUND_ENABLED && msg.authorId && msg.authorId !== ME.userId) playPing();
+      // 「关注任务」判定：后续提示音 / 桌面通知必达共用
+      const relT = msg.payload?.taskId || ((msg.type === 'task.created' || msg.type === 'task.updated') ? msg.payload?.id : null);
+      const followedNow = !!relT && FOLLOWING.has(relT);
+      // 提示音：他人产生的新事件（自己操作的回声不响）；关注任务用三音上行必达音
+      if (SOUND_ENABLED && msg.authorId && msg.authorId !== ME.userId) playPing(followedNow);
       // 文件事件 → 防抖刷新文件中心与上下文附件名
       if (msg.type === 'file.uploaded' || msg.type === 'file.deleted') {
         clearTimeout(_FILE_WS_T);
@@ -1348,8 +1351,6 @@ function connectWS() {
         else { MSG_UNREAD++; updateMsgBadge(); }
       }
       // 桌面通知：重要事件（页面不可见时）或「关注任务」的变更（必达，可见也弹）
-      const relT = msg.payload?.taskId || ((msg.type === 'task.created' || msg.type === 'task.updated') ? msg.payload?.id : null);
-      const followedNow = !!relT && FOLLOWING.has(relT);
       if (DESKTOP_NOTIF && (document.visibilityState !== 'visible' || followedNow)) {
         const notifMap = {
           'task.created': '新任务', 'task.claimed': '任务被认领',
@@ -1602,6 +1603,8 @@ let TASK_PRIORITY = '';
 let FOLLOWING = new Set();
 try { FOLLOWING = new Set(JSON.parse(localStorage.getItem('coagent_following_v1') || '[]')); } catch { FOLLOWING = new Set(); }
 let TASK_FOLLOW_FILTER = false;
+/* 分析页聚焦成员（成员在线卡 📈 直达） */
+let ANALYTICS_FOCUS = '';
 function saveFollowing() { localStorage.setItem('coagent_following_v1', JSON.stringify([...FOLLOWING])); }
 function toggleFollow(id) {
   if (FOLLOWING.has(id)) { FOLLOWING.delete(id); toast('已取消关注', 'ok'); }
@@ -2610,7 +2613,7 @@ function renderMembers() {
             <span class="member-dot ${isOnline ? 'on' : ''}" title="${isOnline ? '在线' : '离线'}"></span>
           </div>
           <div class="member-body">
-            <div class="member-persona">${pl ? `${pl.emoji} ${esc(pl.name)} · ${esc(pl.tag)}` : (p ? '✍️ 自定义人格' : '<span style="color:var(--text-mute)">未绑定人格</span>')}</div>
+            <div class="member-persona">${pl ? `${pl.emoji} ${esc(pl.name)} · ${esc(pl.tag)}` : (p ? '✍️ 自定义人格' : '<span style="color:var(--text-mute)">未绑定人格</span>')} <button class="btn ghost sm" style="float:right;padding:2px 8px;font-size:10px" onclick="ANALYTICS_FOCUS='${esc(m.id)}';nav('analytics')" title="只看该成员贡献">📈</button></div>
             <div class="member-stats">
               <span>🔥 ${c?.count ?? 0} 次动作</span>
               <span>${isOnline ? '<span style="color:var(--ok)">● 在线</span>' : `<span style="color:var(--text-mute)">○ 离线${last ? ' · ' + timeAgo(last) : ''}</span>`}</span>
@@ -2628,7 +2631,11 @@ function renderMembers() {
 function renderAnalytics() {
   const s = CACHE.stats || {};
   const members = s.members || [];
-  const contrib = (s.contributors || []).slice().sort((a, b) => b.count - a.count);
+  const focus = ANALYTICS_FOCUS;
+  const focusName = focus ? (members.find((m) => m.id === focus)?.name || focus) : '';
+  const contribAll = (s.contributors || []).slice().sort((a, b) => b.count - a.count);
+  const contrib = focus ? contribAll.filter((c) => c.id === focus) : contribAll;
+  const focusNames = new Set([focus].filter(Boolean));
   // 每人事件类型分布（近 400 条）
   const typeDist = {};
   for (const ev of (CACHE.events || []).slice(-400)) {
@@ -2643,9 +2650,10 @@ function renderAnalytics() {
   const typeColors = { task: 'var(--info)', context: 'var(--accent)', comment: 'var(--warn)', review: 'var(--purple)', branch: 'var(--ok)', message: 'var(--info)', file: 'var(--warn)', agent: 'var(--purple)' };
   $('content').innerHTML = `
     <div class="page-header"><h2>效率分析</h2><p>团队贡献排行 · 事件类型分布 · 14 天趋势</p></div>
+    ${focus ? `<div class="card" style="padding:10px 16px;margin-bottom:14px;display:flex;align-items:center;gap:10px"><span>🎯 聚焦成员：<b>${esc(focusName)}</b></span><button class="btn ghost sm" onclick="ANALYTICS_FOCUS='';renderAnalytics()">清除聚焦</button></div>` : ''}
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
       <div class="card chart-card">
-        <div class="card-title"><span>🏆 成员贡献榜（近 7 天）</span><span class="card-badge">${contrib.length} 人</span></div>
+        <div class="card-title"><span>🏆 成员贡献榜（近 7 天）</span><span class="card-badge">${focus ? focusName : contrib.length + ' 人'}</span></div>
         <div style="display:flex;flex-direction:column;gap:10px;padding:6px 0">
           ${top.length ? top.map((c, i) => `
             <div class="contrib-row">
@@ -2659,7 +2667,7 @@ function renderAnalytics() {
       <div class="card chart-card">
         <div class="card-title"><span>🧩 成员动作构成</span><span class="card-badge">近 400 条事件</span></div>
         <div style="display:flex;flex-direction:column;gap:9px;padding:6px 0;max-height:320px;overflow-y:auto">
-          ${members.map((m) => {
+          ${members.filter((m) => !focus || m.id === focus).map((m) => {
             const d = typeDist[m.id] || {};
             const items = Object.entries(d);
             if (!items.length) return `<div class="contrib-row" style="opacity:.55"><span style="min-width:110px;font-size:12px;font-weight:600">${esc(m.name || m.id)}</span><span style="font-size:11px;color:var(--text-mute)">暂无动作</span></div>`;
