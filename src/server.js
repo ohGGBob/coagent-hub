@@ -26,7 +26,8 @@ import { createFileStore } from './files.js';
 import { createVectorStore } from './vectors.js';
 import { probeEmbedder, embed, embedOne, embedStatus, embedConfig } from './embed.js';
 import { checkLatest, applyUpdate } from './update.js';
-import { loadUsers, verify, requireScope, createUser, listUsersPublic, rotateToken, deleteUser, getBootstrapInfo, authenticate, emergencyReset } from './auth.js';
+import { loadUsers, verify, requireScope, createUser, listUsersPublic, rotateToken, deleteUser, setPersona, getBootstrapInfo, authenticate, emergencyReset } from './auth.js';
+import { PERSONAS } from './personas.js';
 import * as repo from './git-repo.js';
 import { HubError, badRequest, notFound, newUpgradeRequired, forbidden } from './errors.js';
 import { guideMarkdown } from './guide.js';
@@ -324,10 +325,12 @@ export function createHub() {
       name: body?.name,
       scopes: body?.scopes,
       token: body?.token,
+      personaId: body?.personaId,
+      personaPrompt: body?.personaPrompt,
     });
     appendAudit(user.id, 'user.created', { id: newUser.id });
     // token 只在创建和轮换时返回这一次，之后任何接口都不再外泄
-    return { user: { id: newUser.id, name: newUser.name, scopes: newUser.scopes, token: newUser.token } };
+    return { user: { id: newUser.id, name: newUser.name, scopes: newUser.scopes, token: newUser.token, persona: newUser.persona } };
   });
 
   add('POST', /^\/users\/([^/]+)\/rotate$/, 'admin:write', ({ params, user }) => {
@@ -342,6 +345,20 @@ export function createHub() {
     const result = deleteUser(targetId);
     appendAudit(user.id, 'user.deleted', { id: targetId });
     return result;
+  });
+
+  // ---------- Agent 独立人格（独立思考 · 防人云亦云）----------
+  // 内置人格库对全体已登录 agent 开放：本地 agent 拉取后写入自己的 system prompt
+  add('GET', /^\/personas$/, AUTH_ONLY, () => ({ personas: PERSONAS }));
+
+  // 管理员给某用户绑定/清除人格（personaId 走内置库；prompt 支持自定义；null 清除）
+  add('POST', /^\/users\/([^/]+)\/persona$/, 'admin:write', ({ params, body, user }) => {
+    const target = setPersona(dec(params[0]), body?.persona ?? null);
+    appendAudit(user.id, 'user.persona', {
+      id: target.id,
+      personaId: target.persona?.id ?? null,
+    });
+    return { user: { id: target.id, persona: target.persona } };
   });
 
   // 数据导出（管理员）：打包所有 JSON 数据为一个 JSON 文件，便于备份迁移
@@ -735,6 +752,14 @@ export function createHub() {
       dataSize: dirSize(PATHS.data, { skip: new Set(['repo.git']) }),
       repoSize: dirSize(PATHS.repo),
       eventsFileSize: fs.existsSync(PATHS.events) ? fs.statSync(PATHS.events).size : 0,
+      // 全员独立人格映射（authorId → 人格徽章），供面板展示"多视角协作"。
+      // 放在 /stats（events:read 即可读）是为了让所有 agent 都能看到彼此视角，
+      // 体现"打破信息壁垒"——不只管理员可见。
+      personas: Object.fromEntries(
+        loadUsers()
+          .filter((u) => u.persona)
+          .map((u) => [u.id, { id: u.persona.id, prompt: u.persona.prompt }]),
+      ),
     };
   });
 
@@ -857,7 +882,7 @@ export function createHub() {
     return { event: ev };
   });
 
-  add('GET', /^\/me$/, AUTH_ONLY, ({ user }) => ({ userId: user.id, name: user.name, scopes: user.scopes }));
+  add('GET', /^\/me$/, AUTH_ONLY, ({ user }) => ({ userId: user.id, name: user.name, scopes: user.scopes, persona: user.persona ?? null }));
 
   // ---------- 传输层（HTTP / HTTPS） ----------
   // HTTPS：COAGENT_TLS_CERT + COAGENT_TLS_KEY 同时存在时启用（专业版）。

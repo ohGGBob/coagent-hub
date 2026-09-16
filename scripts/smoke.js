@@ -369,6 +369,35 @@ try {
 
   await rejects(() => alice.users.remove('alice'), 403, '注销自己被拒');
   ok((await alice.users.remove('carol')).removed, 'alice 注销 carol');
+
+  // ------------------------------------------------------------ 9.5 Agent 独立人格（防人云亦云）
+  section('9.5 Agent 独立人格（独立思考提示词）');
+  const personas = (await alice.personas.list()).personas;
+  ok(Array.isArray(personas) && personas.length >= 8, '内置人格库 ≥ 8 种（架构/守卫/测试/文档/先锋/稳健/安全/侦探）');
+  ok(personas.every((p) => p.id && p.prompt && p.emoji), '每个人格含 id / 提示词 / emoji');
+
+  // 给 dave 绑定内置人格「代码守卫」
+  await alice.users.setPersona('dave', { personaId: 'guardian' });
+  let daveMe = await (new HubClient({ hubUrl, token: daveRes.user.token }).me());
+  ok(daveMe.persona?.id === 'guardian' && daveMe.persona?.prompt.includes('怀疑'), '/me 返回 dave 的人格提示词（guardian）');
+
+  // /stats 暴露全员人格映射（所有 agent 可见 → 打破信息壁垒）
+  const st9 = await alice.stats();
+  ok(st9.personas?.dave?.id === 'guardian', '/stats 携带全员人格映射（跨 agent 可见）');
+
+  // 自定义人格 + 清除
+  await alice.users.setPersona('dave', { prompt: '你是独立的 UI 评审，只看用户体验。' });
+  daveMe = await (new HubClient({ hubUrl, token: daveRes.user.token }).me());
+  ok(daveMe.persona?.id === 'custom' && daveMe.persona?.prompt.includes('UI'), '支持自定义人格提示词');
+  await alice.users.setPersona('dave', null);
+  daveMe = await (new HubClient({ hubUrl, token: daveRes.user.token }).me());
+  ok(daveMe.persona === null, '可清除人格');
+  await rejects(() => alice.users.setPersona('dave', { personaId: 'not-exist' }), 400, '未知人格 id 被拒');
+  await rejects(
+    () => new HubClient({ hubUrl, token: daveRes.user.token }).users.setPersona('alice', { personaId: 'architect' }),
+    403,
+    '普通 agent 无权给他人设人格（admin only）',
+  );
   await rejects(
     () => new HubClient({ hubUrl, token: rotated.user.token }).me(),
     401,

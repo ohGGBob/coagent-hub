@@ -233,13 +233,27 @@ export class HubClient {
     list: () => this.request('GET', '/users'),
     /**
      * 开户。
-     * @param {{id: string, name?: string, scopes?: string[]}} input
+     * @param {{id: string, name?: string, scopes?: string[], personaId?: string, personaPrompt?: string}} input
      */
     create: (input) => this.request('POST', '/users', { body: input }),
     /** 轮换 token，旧凭证立即失效 */
     rotate: (id) => this.request('POST', `/users/${encodeURIComponent(id)}/rotate`),
     /** 注销用户（不能注销自己） */
     remove: (id) => this.request('DELETE', `/users/${encodeURIComponent(id)}`),
+    /**
+     * 设置 / 清除某用户的人格提示词（独立视角 · 防人云亦云）。
+     * @param {string} id
+     * @param {{personaId?: string, prompt?: string}|null} persona null 清除
+     */
+    setPersona: (id, persona) => this.request('POST', `/users/${encodeURIComponent(id)}/persona`, { body: { persona } }),
+  };
+
+  /**
+   * 内置 Agent 人格库：本地 agent 拉取后，把自己的 persona.prompt
+   * 写入 system prompt / 角色设定，保持独立思考。
+   */
+  personas = {
+    list: () => this.request('GET', '/personas'),
   };
 
   /**

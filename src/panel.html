@@ -73,6 +73,65 @@
   --shadow-glow: 0 0 0 1px rgba(7,193,96,0.2), 0 8px 28px rgba(7,193,96,0.2);
 }
 
+/* ============ 皮肤：科幻风（赛博霓虹） ============ */
+html[data-skin="scifi"] {
+  --bg: #05070d; --bg-elev: #0a0f18; --bg-card: #0d1420; --bg-hover: #141d2e; --bg-input: #0f1726;
+  --border: #1b2637; --border-strong: #2c3f57;
+  --text: #e2e8f0; --text-sub: #8ba1b8; --text-mute: #54687e;
+  --accent: #22d3ee; --accent-2: #e879f9; --accent-hover: #38bdf8;
+  --accent-bg: rgba(34,211,238,0.12); --accent-border: rgba(34,211,238,0.35);
+  --accent-grad: linear-gradient(135deg, #22d3ee 0%, #e879f9 100%);
+  --rail-bg: #03050a; --rail-bg-2: #0a101a;
+  --rail-text: #74889e; --rail-text-active: #f0f9ff;
+  --bubble-own: #0e7490; --bubble-own-text: #e0f2fe;
+  --ok: #34d399; --ok-bg: rgba(52,211,153,0.12);
+  --err: #fb7185; --err-bg: rgba(251,113,133,0.12);
+  --info: #60a5fa; --info-bg: rgba(96,165,250,0.12);
+  --purple: #c084fc; --purple-bg: rgba(192,132,252,0.12);
+  --shadow: 0 4px 20px rgba(0,0,0,0.5); --shadow-lg: 0 16px 56px rgba(0,0,0,0.72);
+  --shadow-glow: 0 0 0 1px rgba(34,211,238,0.25), 0 8px 28px rgba(34,211,238,0.22);
+}
+html[data-skin="scifi"] body {
+  background-image:
+    radial-gradient(ellipse 65% 45% at 85% -10%, rgba(34,211,238,0.07), transparent),
+    radial-gradient(ellipse 45% 35% at 5% 110%, rgba(232,121,249,0.06), transparent);
+}
+html[data-skin="scifi"] .sidebar {
+  background:
+    linear-gradient(180deg, rgba(3,5,10,0.96), rgba(10,16,26,0.98)),
+    repeating-linear-gradient(0deg, transparent 0 23px, rgba(34,211,238,0.04) 23px 24px);
+}
+html[data-skin="scifi"] .nav-item.active {
+  background: linear-gradient(90deg, rgba(34,211,238,0.22), rgba(232,121,249,0.10));
+  box-shadow: inset 0 0 0 1px rgba(34,211,238,0.35);
+}
+html[data-skin="scifi"] .stat-card::after { background: linear-gradient(90deg, #22d3ee, #e879f9); }
+
+/* ============ 皮肤：可爱风（粉彩圆润） ============ */
+html[data-skin="cute"] {
+  --bg: #fff4f6; --bg-elev: #ffffff; --bg-card: #ffffff; --bg-hover: #ffe9ef; --bg-input: #fff4f6;
+  --border: #ffd9e0; --border-strong: #ffc0cd;
+  --text: #5b3a45; --text-sub: #a47886; --text-mute: #cfa6b2;
+  --accent: #f472b6; --accent-2: #a78bfa; --accent-hover: #ec4899;
+  --accent-bg: rgba(244,114,182,0.12); --accent-border: rgba(244,114,182,0.32);
+  --accent-grad: linear-gradient(135deg, #f472b6 0%, #a78bfa 100%);
+  --rail-bg: #7c2d4e; --rail-bg-2: #8e3a5f;
+  --rail-text: #f6c8d8; --rail-text-active: #fff;
+  --bubble-own: #f9a8d4; --bubble-own-text: #5b2a3d;
+  --ok: #34d399; --ok-bg: rgba(52,211,153,0.14);
+  --err: #f87171; --err-bg: rgba(248,113,113,0.12);
+  --info: #60a5fa; --info-bg: rgba(96,165,250,0.14);
+  --purple: #c084fc; --purple-bg: rgba(192,132,252,0.14);
+  --radius: 16px; --radius-sm: 10px; --radius-lg: 26px;
+  --shadow: 0 4px 16px rgba(244,114,182,0.10); --shadow-lg: 0 16px 48px rgba(244,114,182,0.18);
+  --shadow-glow: 0 0 0 1px rgba(244,114,182,0.18), 0 8px 24px rgba(244,114,182,0.18);
+}
+html[data-skin="cute"] .nav-item.active {
+  background: linear-gradient(90deg, rgba(244,114,182,0.24), rgba(167,139,250,0.12));
+  box-shadow: inset 0 0 0 1px rgba(244,114,182,0.3);
+}
+html[data-skin="cute"] .stat-card::after { background: linear-gradient(90deg, #f472b6, #a78bfa); }
+
 * { box-sizing: border-box; margin: 0; padding: 0; }
 html, body { height: 100%; }
 body {
@@ -277,6 +336,14 @@ body {
 .chip.info { background: var(--info-bg); color: var(--info); }
 .chip.purple { background: var(--purple-bg); color: var(--purple); }
 .chip.accent { background: var(--accent-bg); color: var(--accent); }
+.skin-card.active { border-color: var(--accent) !important; box-shadow: 0 0 0 3px var(--accent-bg); }
+/* Agent 人格徽章（独立视角标识） */
+.persona-chip {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 15px; height: 15px; font-size: 10.5px; line-height: 1;
+  border-radius: 50%; margin-left: 4px; vertical-align: -1px;
+  background: var(--accent-bg); border: 1px solid var(--accent-border); cursor: default;
+}
 .chip.urgent { background: var(--err-bg); color: var(--urgent); }
 .chip.high { background: rgba(251,146,60,0.12); color: var(--high); }
 .chip.medium { background: var(--info-bg); color: var(--medium); }
@@ -530,19 +597,30 @@ tr:hover td { background: var(--bg-hover); }
   width: 36px; height: 36px; border-radius: 7px; flex-shrink: 0;
   background: linear-gradient(135deg, #5b8def, #3a6fd8); color: #fff;
   display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 14px;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.12);
 }
-.msg-row.own .msg-avatar { background: linear-gradient(135deg, #07c160, #0aa856); }
+.msg-row.own .msg-avatar { background: var(--accent-grad); }
 .msg-body { max-width: 62%; display: flex; flex-direction: column; gap: 4px; }
 .msg-row.own .msg-body { align-items: flex-end; }
 .msg-meta { font-size: 10px; color: var(--text-mute); padding: 0 2px; }
 .msg-bubble {
-  padding: 9px 13px; border-radius: 8px; background: var(--bg-elev);
+  padding: 9px 13px; border-radius: 12px; background: var(--bg-elev);
   border: 1px solid var(--border); font-size: 13.5px; word-break: break-word; line-height: 1.55;
+  position: relative; box-shadow: 0 1px 2px rgba(0,0,0,0.04);
 }
+/* 微信式气泡尾刺 */
+.msg-bubble::after {
+  content: ''; position: absolute; top: 10px; width: 0; height: 0;
+  border-top: 6px solid transparent; border-bottom: 6px solid transparent;
+}
+.msg-row:not(.own) .msg-bubble::after { left: -7px; border-right: 8px solid var(--bg-elev); }
+.msg-row:not(.own) .msg-bubble { border-top-left-radius: 4px; }
 .msg-row.own .msg-bubble { background: var(--bubble-own); color: var(--bubble-own-text); border-color: transparent; }
+.msg-row.own .msg-bubble::after { right: -7px; border-left: 8px solid var(--bubble-own); }
+.msg-row.own .msg-bubble { border-top-right-radius: 4px; }
 .msg-inputbar { display: flex; gap: 10px; padding: 12px 14px; border-top: 1px solid var(--border); background: var(--bg-elev); flex-shrink: 0; }
-.msg-inputbar .input { background: var(--bg-elev); }
-.msg-inputbar .btn { border-radius: 8px; padding: 8px 22px; }
+.msg-inputbar .input { background: var(--bg-elev); border-radius: 20px; }
+.msg-inputbar .btn { border-radius: 20px; padding: 8px 22px; }
 .msg-day { align-self: center; font-size: 11px; color: var(--text-mute); background: var(--bg-elev); border: 1px solid var(--border); padding: 2px 10px; border-radius: 10px; }
 .empty-chan { flex: 1; display: flex; align-items: center; justify-content: center; color: var(--text-mute); font-size: 13px; }
 
@@ -854,6 +932,23 @@ function toggleTheme() {
 }
 (function initTheme() { const s = localStorage.getItem('coagent_theme'); if (s) document.documentElement.setAttribute('data-theme', s); })();
 
+/* ---------- 皮肤（经典微信绿 / 科幻 / 可爱） ---------- */
+const SKINS = [
+  { id: 'classic', name: '经典微信绿', desc: '克制 · 原生协作质感', swatch: ['#07c160', '#0b1014'] },
+  { id: 'scifi', name: '科幻赛博', desc: '霓虹 · 深空星舰', swatch: ['#22d3ee', '#e879f9', '#05070d'] },
+  { id: 'cute', name: '可爱粉彩', desc: '温柔 · 圆润粉蜡', swatch: ['#f472b6', '#a78bfa', '#fff4f6'] },
+];
+function applySkin(id) {
+  if (id) document.documentElement.setAttribute('data-skin', id);
+  localStorage.setItem('coagent_skin', id || 'classic');
+  const cur = document.querySelectorAll('.skin-card');
+  cur.forEach((c) => c.classList.toggle('active', c.dataset.skin === (id || 'classic')));
+}
+(function initSkin() {
+  const s = localStorage.getItem('coagent_skin');
+  if (s && s !== 'classic') document.documentElement.setAttribute('data-skin', s);
+})();
+
 /* ---------- 登录 ---------- */
 function login() {
   TOKEN = $('token-in').value.trim();
@@ -904,6 +999,7 @@ async function boot() {
   $('user-id').textContent = ME.userId;
   $('user-avatar').textContent = (ME.name || ME.userId || '?').charAt(0).toUpperCase();
   try { HEALTH = await api('GET', '/healthz'); $('brand-ver').textContent = 'v' + HEALTH.version; LAST_SEQ = HEALTH.lastSeq; } catch {}
+  try { PERSONA_LIB = (await api('GET', '/personas')).personas || []; } catch { /* 兼容 */ }
   connectWS();
   await refreshAll();
   nav('dashboard');
@@ -954,6 +1050,8 @@ const updateSeq = () => { $('seq-display').textContent = 'seq ' + LAST_SEQ; };
 const updateNotifDot = () => { $('notif-dot').style.display = UNREAD_COUNT > 0 ? '' : 'none'; };
 
 /* ---------- 数据刷新 ---------- */
+let PERSONA_MAP = {};   // authorId -> {id, prompt}（全员人格，来自 /stats）
+let PERSONA_LIB = [];   // 内置人格库缓存（用户管理页用）
 async function refreshAll() {
   try {
     const [h, tasks, ctx, rev, br, stats] = await Promise.all([
@@ -963,6 +1061,7 @@ async function refreshAll() {
     HEALTH = h; LAST_SEQ = h.lastSeq; updateSeq();
     CACHE.tasks = tasks.tasks; CACHE.context = ctx.entries; CACHE.reviews = rev.reviews;
     CACHE.branches = br.branches; CACHE.stats = stats;
+    PERSONA_MAP = stats.personas || {};
     if (stats.onlineUsers) $('online-count').textContent = stats.onlineUsers.length;
     loadEmbedBadge();
     loadUpdateStatus();
@@ -971,6 +1070,13 @@ async function refreshAll() {
     // 消息页由 WS 实时驱动 + 输入框需要保留焦点，不做定时全量重绘
     if (PAGE !== 'messages') renderCurrent();
   } catch (e) { if (String(e.message).includes('401')) logout(); }
+}
+/* 作者人格徽章（独立视角可视化）：有 persona 返回 emoji 气泡，否则空 */
+function personaBadge(authorId) {
+  const p = PERSONA_MAP[authorId];
+  if (!p) return '';
+  const lib = PERSONA_LIB.find((x) => x.id === p.id);
+  return `<span class="persona-chip" title="${esc(p.prompt || '')}">${lib ? lib.emoji : '🧠'}</span>`;
 }
 function updateBadges() {
   const ot = CACHE.tasks.filter((t) => t.status === 'open').length;
@@ -1410,10 +1516,29 @@ function msgBubbleHTML(ev) {
     <div class="msg-row ${own ? 'own' : ''}">
       <div class="msg-avatar">${esc((ev.authorId || '?').charAt(0).toUpperCase())}</div>
       <div class="msg-body">
-        <div class="msg-meta">${own ? '我' : esc(ev.authorId)} · ${timeAgo(ev.ts)}${chTag}</div>
+        <div class="msg-meta">${own ? '我' : esc(ev.authorId)}${personaBadge(ev.authorId)} · ${timeAgo(ev.ts)}${chTag}</div>
         <div class="msg-bubble">${text || '<span style="color:var(--text-mute)">（空消息）</span>'}</div>
       </div>
     </div>`;
+}
+/* 微信式消息流：按天插入「今天 / 昨天 / 日期」分隔线 */
+function msgListHTML(list) {
+  let out = '', lastDay = '';
+  const now = new Date();
+  const yesterday = new Date(now.getTime() - 864e5).toDateString();
+  for (const ev of list) {
+    const d = new Date(ev.ts);
+    const dayKey = d.toDateString();
+    if (dayKey !== lastDay) {
+      lastDay = dayKey;
+      const label = dayKey === now.toDateString() ? '今天'
+        : dayKey === yesterday ? '昨天'
+        : d.toLocaleDateString('zh-CN', { month: 'long', day: 'numeric' });
+      out += `<div class="msg-day">${label}</div>`;
+    }
+    out += msgBubbleHTML(ev);
+  }
+  return out;
 }
 function appendMsgBubble(ev) {
   const stream = $('msg-stream');
@@ -1457,7 +1582,7 @@ async function renderMessages() {
       <div class="msg-main">
         <div class="msg-chat-head">${chLabel}<span class="sub">· ${list.length} 条消息 · Enter 发送</span></div>
         <div class="msg-stream" id="msg-stream">
-          ${list.length ? list.map(msgBubbleHTML).join('') : '<div class="empty-chan">还没有消息，打个招呼吧 👋</div>'}
+          ${list.length ? msgListHTML(list) : '<div class="empty-chan">还没有消息，打个招呼吧 👋</div>'}
         </div>
         <div class="msg-inputbar">
           <input class="input" id="msg-input" placeholder="发消息到 #${esc(MSG_CHANNEL)} …"
@@ -1875,33 +2000,100 @@ function eventTimelineItem(ev) {
     default: desc = JSON.stringify(p);
   }
   return `<div class="tl-item ${tc[ev.type] || ''}"><div class="tl-head"><span class="tl-type">#${ev.seq} ${esc(ev.type)}</span><span class="tl-time">${dt(ev.ts)} · ${timeAgo(ev.ts)}</span></div>
-    <div class="tl-body"><span class="author">${esc(ev.authorId)}</span> ${esc(desc)}</div></div>`;
+    <div class="tl-body"><span class="author">${esc(ev.authorId)}${personaBadge(ev.authorId)}</span> ${esc(desc)}</div></div>`;
 }
 
 /* ============================================================
    用户管理
    ============================================================ */
 async function renderUsers() {
-  $('content').innerHTML = `<div class="page-header"><h2>用户管理</h2><p>开户、轮换 token、注销 · 需 admin:write</p></div>
+  // 拉取内置人格库（用于开户下拉与人格设置）
+  let PERSONA_LIB = [];
+  try { PERSONA_LIB = (await api('GET', '/personas')).personas || []; } catch { /* 老版本兼容 */ }
+  $('content').innerHTML = `<div class="page-header"><h2>用户管理</h2><p>开户、人格设定、轮换 token、注销 · 需 admin:write</p></div>
     <div class="card"><div class="form-row">
       <input class="input" id="us-id" placeholder="userId（英文）" style="width:180px">
       <input class="input" id="us-name" placeholder="显示名" style="width:180px">
+      <select class="select" id="us-persona" style="width:170px">
+        <option value="">人格：不设定</option>
+        ${PERSONA_LIB.map((p) => `<option value="${p.id}">${p.emoji} ${p.name} — ${p.tag}</option>`).join('')}
+      </select>
       <button class="btn" onclick="createUser()">👤 开户</button></div>
-      <p style="font-size:12px;color:var(--text-mute);margin-top:4px">token 只显示一次，请立刻复制转发。默认普通 agent 权限。</p></div>
-    <div class="card" style="padding:0"><div class="table-wrap"><table><tr><th>ID</th><th>显示名</th><th>权限</th><th>操作</th></tr>
-      <tr><td colspan="4"><div class="skeleton" style="height:20px;margin:10px"></div></td></tr></table></div></div>`;
+      <p style="font-size:12px;color:var(--text-mute);margin-top:4px">token 只显示一次，请立刻复制转发。默认普通 agent 权限。人格 = 该 agent 的独立视角提示词，防止人云亦云。</p></div>
+    <div class="card" style="padding:0"><div class="table-wrap"><table><tr><th>ID</th><th>显示名</th><th>人格</th><th>权限</th><th>操作</th></tr>
+      <tr><td colspan="5"><div class="skeleton" style="height:20px;margin:10px"></div></td></tr></table></div></div>`;
   try {
     const { users } = await api('GET', '/users');
-    $('content').querySelector('table').innerHTML = `<tr><th>ID</th><th>显示名</th><th>权限</th><th>操作</th></tr>
-      ${users.map((u) => `<tr><td><code style="font-family:var(--mono)">${esc(u.id)}</code></td><td>${esc(u.name||'')}</td>
+    const rows = users.map((u) => {
+      const persona = u.persona;
+      const personaCell = persona
+        ? (() => {
+            const lib = PERSONA_LIB.find((p) => p.id === persona.id);
+            return `<span class="chip accent" title="${esc(persona.prompt)}">${lib ? lib.emoji + ' ' + lib.name : '✍️ 自定义'}</span>`;
+          })()
+        : '<span style="color:var(--text-mute);font-size:11px">—</span>';
+      return `<tr><td><code style="font-family:var(--mono)">${esc(u.id)}</code></td><td>${esc(u.name||'')}</td>
+        <td>${personaCell}</td>
         <td>${(u.scopes||[]).includes('admin:write') ? '<span class="chip err">管理员</span>' : '<span class="chip ok">agent</span>'}</td>
-        <td><button class="btn ghost sm" onclick="rotateUser('${u.id}')">换 token</button>
-        ${u.id !== ME.userId ? `<button class="btn danger sm" onclick="delUser('${u.id}')">注销</button>` : '<span style="color:var(--text-mute);font-size:11px">当前用户</span>'}</td></tr>`).join('')}`;
+        <td><button class="btn ghost sm" onclick="editPersona('${u.id}', ${JSON.stringify(persona ?? null)})">🧠 人格</button>
+        <button class="btn ghost sm" onclick="rotateUser('${u.id}')">换 token</button>
+        ${u.id !== ME.userId ? `<button class="btn danger sm" onclick="delUser('${u.id}')">注销</button>` : '<span style="color:var(--text-mute);font-size:11px">当前用户</span>'}</td></tr>`;
+    }).join('');
+    $('content').querySelector('table').innerHTML = `<tr><th>ID</th><th>显示名</th><th>人格</th><th>权限</th><th>操作</th></tr>${rows}`;
   } catch (e) { $('content').querySelector('.table-wrap').innerHTML = `<div class="card"><p style="color:var(--err)">✗ ${esc(e.message)}</p><p style="font-size:12px;color:var(--text-sub);margin-top:6px">需要 admin:write 权限。</p></div>`; }
 }
-function createUser() {
+async function createUser() {
   const id = $('us-id').value.trim(); if (!id) return toast('userId 不能为空', 'err');
-  api('POST', '/users', { id, name: $('us-name').value.trim() }).then((r) => { showTokenModal(r.user.token, id); $('us-id').value = ''; $('us-name').value = ''; refreshAll(); }).catch((e) => toast('✗ ' + e.message, 'err'));
+  const personaId = $('us-persona')?.value || undefined;
+  api('POST', '/users', { id, name: $('us-name').value.trim(), personaId }).then((r) => { showTokenModal(r.user.token, id); $('us-id').value = ''; $('us-name').value = ''; $('us-persona').value = ''; refreshAll(); }).catch((e) => toast('✗ ' + e.message, 'err'));
+}
+/* 人格设置模态：内置人格下拉 + 自定义提示词 + 预览/清除 */
+let PERSONA_LIB = [];
+async function editPersona(id, current) {
+  if (!PERSONA_LIB.length) {
+    try { PERSONA_LIB = (await api('GET', '/personas')).personas || []; } catch { PERSONA_LIB = []; }
+  }
+  const cur = current || {};
+  showModal(`<h3>🧠 设置「${esc(id)}」的独立人格</h3>
+    <p style="font-size:12px;color:var(--text-sub);margin-bottom:12px">人格提示词决定该 agent 的思考视角：架构、测试、安全、激进、稳健……各自独立，防止人云亦云。agent 通过 <code style="font-family:var(--mono)">GET /me</code> 拉取自己的 persona.prompt 写入本地 system prompt。</p>
+    <div class="form-row">
+      <select class="select" id="ps-select" style="flex:1" onchange="psPreview()">
+        <option value="">内置人格…</option>
+        ${PERSONA_LIB.map((p) => `<option value="${p.id}" ${cur.id === p.id ? 'selected' : ''}>${p.emoji} ${p.name} — ${p.tag}</option>`).join('')}
+      </select>
+    </div>
+    <div style="font-size:12px;font-weight:600;color:var(--text-sub);margin:10px 0 6px">或自定义提示词</div>
+    <textarea class="textarea" id="ps-prompt" style="min-height:90px;font-family:var(--mono);font-size:12px" placeholder="写下该 agent 的独立视角 / 职责边界…">${esc(cur.prompt || '')}</textarea>
+    <div id="ps-preview" style="font-size:12px;color:var(--text-sub);background:var(--bg-input);border-radius:8px;padding:10px;margin-top:8px;min-height:34px">${esc((PERSONA_LIB.find((p) => p.id === cur.id)?.prompt) || '')}</div>
+    <div class="actions">
+      <button class="btn ghost sm" onclick="psSave('${id}', null)" style="color:var(--err)">清除人格</button>
+      <div style="flex:1"></div>
+      <button class="btn ghost" onclick="closeModal()">取消</button>
+      <button class="btn" onclick="psSave('${id}')">保存</button>
+    </div>`);
+  psPreview();
+}
+async function psPreview() {
+  const sel = $('ps-select').value;
+  const p = PERSONA_LIB.find((x) => x.id === sel);
+  const preview = $('ps-preview');
+  if (p) { $('ps-prompt').value = p.prompt; preview.textContent = p.prompt; }
+  else if (!preview) { /* 尚未渲染 */ }
+  else { preview.textContent = $('ps-prompt').value.trim() ? '✍️ 自定义提示词（预览如上）' : '未设定人格'; }
+}
+async function psSave(id, persona) {
+  const sel = $('ps-select').value;
+  const prompt = $('ps-prompt').value.trim();
+  let body = persona;
+  if (body === undefined) {
+    if (sel) body = { personaId: sel };
+    else if (prompt) body = { prompt };
+    else body = null;
+  }
+  try {
+    await api('POST', `/users/${encodeURIComponent(id)}/persona`, { persona: body });
+    toast('人格已保存', 'ok'); closeModal(); refreshAll();
+  } catch (e) { toast('✗ ' + e.message, 'err'); }
 }
 function showTokenModal(token, id) {
   showModal(`<h3>✓ 开户成功</h3>
@@ -1976,9 +2168,18 @@ function renderSettings() {
       <p style="font-size:12px;color:var(--text-sub);margin-top:8px">主机安装 Ollama 并 <code style="font-family:var(--mono)">ollama pull bge-m3</code> 后自动启用；未启用时检索自动退回 BM25。</p>
     </div>
     <div class="card"><div class="card-title">外观与通知</div>
-      <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+      <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:14px">
         <button class="btn ghost" onclick="toggleTheme()">🌓 切换深色 / 浅色主题</button>
         <button class="btn ghost" onclick="enableDesktopNotif()">🔔 ${DESKTOP_NOTIF ? '桌面通知已开启' : '开启桌面通知'}</button>
+      </div>
+      <div style="font-size:12px;font-weight:600;color:var(--text-sub);margin-bottom:8px">界面皮肤</div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap">
+        ${SKINS.map((k) => `
+          <div class="skin-card${(localStorage.getItem('coagent_skin') || 'classic') === k.id ? ' active' : ''}" data-skin="${k.id}" onclick="applySkin('${k.id}')" style="cursor:pointer;border:2px solid var(--border);border-radius:14px;padding:10px 14px;min-width:150px;transition:all .18s;background:var(--bg-card)">
+            <div style="display:flex;gap:4px;margin-bottom:6px">${k.swatch.map((c) => `<span style="width:18px;height:18px;border-radius:6px;background:${c};display:inline-block;border:1px solid rgba(0,0,0,.08)"></span>`).join('')}</div>
+            <div style="font-size:13px;font-weight:700">${k.name}</div>
+            <div style="font-size:11px;color:var(--text-mute)">${k.desc}</div>
+          </div>`).join('')}
       </div>
       <p style="font-size:12px;color:var(--text-mute);margin-top:8px">桌面通知仅在面板不可见时触发，避免打扰。快捷键：<span class="kbd-hint">Ctrl+K</span> 命令面板 · <span class="kbd-hint">N</span> 新任务 · <span class="kbd-hint">/</span> 搜索</p>
     </div>`;

@@ -106,3 +106,20 @@ test('loadUsers：用户表损坏时抛错且绝不覆盖（防止种子 token �
   const raw = fs.readFileSync(PATHS.users, 'utf8');
   assert.equal(raw, '{corrupt', '原文件必须原样保留');
 });
+
+test('persona：开户绑定内置人格 / 自定义 / 清除 / 非法 id 拒绝', () => {
+  seed();
+  const arch = auth.createUser({ id: 'arch1', personaId: 'architect' });
+  assert.equal(arch.persona.id, 'architect');
+  assert.ok(arch.persona.prompt.includes('架构'));
+  const custom = auth.createUser({ id: 'cust1', personaPrompt: '你是独立评审。' });
+  assert.equal(custom.persona.id, 'custom');
+  assert.equal(custom.persona.prompt, '你是独立评审。');
+  const plain = auth.createUser({ id: 'plain1' });
+  assert.equal(plain.persona, null);
+  assert.throws(() => auth.createUser({ id: 'bad1', personaId: 'nope' }), (e) => e.status === 400);
+  // setPersona：换内置 / 清除
+  assert.equal(auth.setPersona('plain1', { personaId: 'sentinel' }).persona.id, 'sentinel');
+  assert.equal(auth.setPersona('plain1', null).persona, null);
+  assert.throws(() => auth.setPersona('nobody', { personaId: 'architect' }), (e) => e.status === 404);
+});

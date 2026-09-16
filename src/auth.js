@@ -12,6 +12,7 @@ import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { PATHS } from './config.js';
 import { readJson, writeJson } from './jsonfile.js';
 import { unauthorized, forbidden, conflict, notFound, badRequest } from './errors.js';
+import { normalizePersona } from './personas.js';
 
 /** 全部可用 scope */
 export const SCOPES = Object.freeze([
@@ -46,6 +47,7 @@ const ADMIN_SCOPES = [...SCOPES];
  * @property {string} name
  * @property {string} token
  * @property {string[]} scopes
+ * @property {{id: string|null, prompt: string}|null} [persona] 独立人格提示词（可选）
  */
 
 /** 首次启动时写入的种子用户（冒烟测试依赖这两个账号） */
@@ -208,7 +210,7 @@ const newToken = () => `tok_${randomBytes(24).toString('hex')}`;
  * 开户。token 省略时自动生成（推荐，避免弱 token）。
  * 不传 scopes 时默认发放普通 agent 权限（不含 admin:write），
  * 要开管理员需显式传入含 admin:write 的完整 scope 清单。
- * @param {{id: string, name?: string, scopes?: string[], token?: string}} input
+ * @param {{id: string, name?: string, scopes?: string[], token?: string, personaId?: string, personaPrompt?: string}} input
  * @returns {User}
  */
 export function createUser(input) {
@@ -228,6 +230,13 @@ export function createUser(input) {
     token: input.token?.trim() || newToken(),
     scopes: input.scopes?.length ? [...input.scopes] : [...AGENT_SCOPES],
   };
+  try {
+    user.persona = normalizePersona(
+      input.personaId ? { personaId: input.personaId } : input.personaPrompt ? { prompt: input.personaPrompt } : null,
+    );
+  } catch (err) {
+    throw badRequest(err.message);
+  }
   users.push(user);
   saveUsers(users);
   return user;
@@ -276,4 +285,23 @@ export function deleteUser(id) {
   users.splice(idx, 1);
   saveUsers(users);
   return { id, removed: true };
+}
+
+/**
+ * 设置 / 清除某用户的独立人格提示词。
+ * @param {string} id
+ * @param {{personaId?: string, prompt?: string}|null} input 传 null 或空则清除
+ * @returns {User}
+ */
+export function setPersona(id, input) {
+  const users = loadUsers();
+  const user = users.find((u) => u.id === id);
+  if (!user) throw notFound(`用户不存在：${id}`);
+  try {
+    user.persona = normalizePersona(input);
+  } catch (err) {
+    throw badRequest(err.message);
+  }
+  saveUsers(users);
+  return user;
 }
