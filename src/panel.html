@@ -132,6 +132,63 @@ html[data-skin="cute"] .nav-item.active {
 }
 html[data-skin="cute"] .stat-card::after { background: linear-gradient(90deg, #f472b6, #a78bfa); }
 
+/* ============ 皮肤：午夜紫（深紫夜航） ============ */
+html[data-skin="midnight"] {
+  --bg: #0c0a17; --bg-elev: #141126; --bg-card: #171332; --bg-hover: #1f1a40; --bg-input: #120f26;
+  --border: #262048; --border-strong: #3a3270;
+  --text: #e9e6ff; --text-sub: #a49fd0; --text-mute: #6f689f;
+  --accent: #a78bfa; --accent-2: #f472b6; --accent-hover: #8b6ff5;
+  --accent-bg: rgba(167,139,250,0.14); --accent-border: rgba(167,139,250,0.35);
+  --accent-grad: linear-gradient(135deg, #a78bfa 0%, #f472b6 100%);
+  --rail-bg: #080612; --rail-bg-2: #110e22;
+  --rail-text: #7d76ad; --rail-text-active: #f3f0ff;
+  --bubble-own: #4c3d8f; --bubble-own-text: #eeeaff;
+  --ok: #34d399; --ok-bg: rgba(52,211,153,0.14);
+  --err: #fb7185; --err-bg: rgba(251,113,133,0.14);
+  --info: #818cf8; --info-bg: rgba(129,140,248,0.14);
+  --purple: #c084fc; --purple-bg: rgba(192,132,252,0.14);
+  --shadow: 0 4px 20px rgba(0,0,0,0.45); --shadow-lg: 0 16px 56px rgba(0,0,0,0.65);
+  --shadow-glow: 0 0 0 1px rgba(167,139,250,0.22), 0 8px 28px rgba(167,139,250,0.22);
+}
+html[data-skin="midnight"] body {
+  background-image:
+    radial-gradient(ellipse 60% 45% at 90% -10%, rgba(167,139,250,0.08), transparent),
+    radial-gradient(ellipse 40% 35% at 0% 110%, rgba(244,114,182,0.06), transparent);
+}
+html[data-skin="midnight"] .sidebar {
+  background: linear-gradient(180deg, rgba(8,6,18,0.97), rgba(17,14,34,0.98));
+}
+html[data-skin="midnight"] .nav-item.active {
+  background: linear-gradient(90deg, rgba(167,139,250,0.22), rgba(244,114,182,0.10));
+  box-shadow: inset 0 0 0 1px rgba(167,139,250,0.35);
+}
+html[data-skin="midnight"] .stat-card::after { background: linear-gradient(90deg, #a78bfa, #f472b6); }
+
+/* ============ 皮肤：暖纸（米白极简） ============ */
+html[data-skin="paper"] {
+  --bg: #faf7f2; --bg-elev: #ffffff; --bg-card: #ffffff; --bg-hover: #f3ede3; --bg-input: #faf7f2;
+  --border: #e7dfd2; --border-strong: #d8cdba;
+  --text: #3d3426; --text-sub: #8a7d66; --text-mute: #b3a88f;
+  --accent: #c2410c; --accent-2: #d97706; --accent-hover: #b0390a;
+  --accent-bg: rgba(194,65,12,0.10); --accent-border: rgba(194,65,12,0.28);
+  --accent-grad: linear-gradient(135deg, #c2410c 0%, #d97706 100%);
+  --rail-bg: #5d4326; --rail-bg-2: #6f5230;
+  --rail-text: #d9c7a8; --rail-text-active: #fffdf7;
+  --bubble-own: #d97706; --bubble-own-text: #fff8ee;
+  --ok: #16a34a; --ok-bg: rgba(22,163,74,0.12);
+  --err: #dc2626; --err-bg: rgba(220,38,38,0.10);
+  --info: #2563eb; --info-bg: rgba(37,99,235,0.10);
+  --purple: #9333ea; --purple-bg: rgba(147,51,234,0.10);
+  --radius: 12px; --radius-sm: 8px; --radius-lg: 20px;
+  --shadow: 0 4px 14px rgba(93,67,38,0.08); --shadow-lg: 0 16px 44px rgba(93,67,38,0.14);
+  --shadow-glow: 0 0 0 1px rgba(194,65,12,0.15), 0 8px 22px rgba(194,65,12,0.12);
+}
+html[data-skin="paper"] .nav-item.active {
+  background: linear-gradient(90deg, rgba(194,65,12,0.16), rgba(217,119,6,0.08));
+  box-shadow: inset 0 0 0 1px rgba(194,65,12,0.3);
+}
+html[data-skin="paper"] .stat-card::after { background: linear-gradient(90deg, #c2410c, #d97706); }
+
 * { box-sizing: border-box; margin: 0; padding: 0; }
 html, body { height: 100%; }
 body {
@@ -514,6 +571,38 @@ body { text-rendering: optimizeLegibility; }
 .user-dot.on { background: var(--ok); opacity: 1; box-shadow: 0 0 0 3px var(--ok-bg); animation: pulseDot 2s var(--ease) infinite; }
 @keyframes pulseDot { 0%, 100% { box-shadow: 0 0 0 3px var(--ok-bg); } 50% { box-shadow: 0 0 0 5px var(--ok-bg); } }
 
+/* 成员在线拓扑 */
+.member-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 12px; }
+.member-card {
+  background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 14px; transition: transform var(--dur) var(--ease), border-color var(--dur), box-shadow var(--dur);
+}
+.member-card:hover { transform: translateY(-2px); border-color: var(--accent-border); box-shadow: var(--shadow); }
+.member-card.on { border-color: var(--accent-border); }
+.member-head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+.member-ava {
+  width: 42px; height: 42px; border-radius: 50%; flex-shrink: 0; font-size: 19px;
+  display: flex; align-items: center; justify-content: center;
+  background: linear-gradient(135deg, var(--accent), var(--accent-2)); color: #fff;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+}
+.member-info { flex: 1; min-width: 0; }
+.member-name { font-weight: 700; font-size: 13.5px; display: flex; align-items: center; gap: 6px; }
+.member-id { font-size: 10.5px; color: var(--text-mute); font-family: var(--mono); margin-top: 1px; }
+.member-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--text-mute); opacity: .4; flex-shrink: 0; }
+.member-dot.on { background: var(--ok); opacity: 1; box-shadow: 0 0 0 3px var(--ok-bg); animation: pulseDot 2s var(--ease) infinite; }
+.member-body { border-top: 1px dashed var(--border); padding-top: 9px; }
+.member-persona { font-size: 11.5px; color: var(--text-sub); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.member-stats { display: flex; justify-content: space-between; font-size: 10.5px; color: var(--text-mute); margin-top: 6px; }
+
+/* 效率分析 */
+.contrib-row { display: flex; align-items: center; gap: 8px; }
+.rank { width: 18px; height: 18px; border-radius: 6px; background: var(--bg-hover); color: var(--text-mute); font-size: 10px; font-weight: 700; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.rank.top { background: var(--accent-bg); color: var(--accent); }
+.contrib-bar { flex: 1; height: 7px; border-radius: 4px; background: var(--bg-hover); overflow: hidden; }
+.contrib-bar div { height: 100%; border-radius: 4px; background: var(--accent-grad); transition: width .5s var(--ease); }
+.type-pill { font-size: 10px; font-weight: 600; border: 1px solid; border-radius: 20px; padding: 1px 8px; white-space: nowrap; }
+
 /* 看板 */
 .board { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
 .board-col {
@@ -849,6 +938,8 @@ tr:hover td { background: var(--bg-hover); }
       <div class="nav-item" data-page="tasks" title="任务板" onclick="nav('tasks')"><span class="icon">✅</span><span>任务板</span><span class="badge" id="badge-tasks" style="display:none">0</span></div>
       <div class="nav-item" data-page="messages" title="消息" onclick="nav('messages')"><span class="icon">🗨️</span><span>消息</span><span class="badge" id="badge-msgs" style="display:none">0</span></div>
       <div class="nav-item" data-page="files" title="共享文件中心" onclick="nav('files')"><span class="icon">📁</span><span>文件</span></div>
+      <div class="nav-item" data-page="members" title="成员在线" onclick="nav('members')"><span class="icon">🟢</span><span>成员</span></div>
+      <div class="nav-item" data-page="analytics" title="效率分析" onclick="nav('analytics')"><span class="icon">📈</span><span>分析</span></div>
       <div class="nav-item" data-page="search" title="全局搜索" onclick="nav('search')"><span class="icon">🔎</span><span>搜索</span></div>
       <div class="nav-item" data-page="context" title="共享上下文" onclick="nav('context')"><span class="icon">💬</span><span>共享上下文</span></div>
       <div class="nav-item" data-page="reviews" title="审核 / PR" onclick="nav('reviews')"><span class="icon">🔍</span><span>审核 / PR</span><span class="badge" id="badge-reviews" style="display:none">0</span></div>
@@ -1146,11 +1237,13 @@ function toggleTheme() {
 }
 (function initTheme() { const s = localStorage.getItem('coagent_theme'); if (s) document.documentElement.setAttribute('data-theme', s); })();
 
-/* ---------- 皮肤（经典微信绿 / 科幻 / 可爱） ---------- */
+/* ---------- 皮肤（经典微信绿 / 科幻 / 可爱 / 午夜紫 / 暖纸） ---------- */
 const SKINS = [
   { id: 'classic', name: '经典微信绿', desc: '克制 · 原生协作质感', swatch: ['#07c160', '#0b1014'] },
   { id: 'scifi', name: '科幻赛博', desc: '霓虹 · 深空星舰', swatch: ['#22d3ee', '#e879f9', '#05070d'] },
   { id: 'cute', name: '可爱粉彩', desc: '温柔 · 圆润粉蜡', swatch: ['#f472b6', '#a78bfa', '#fff4f6'] },
+  { id: 'midnight', name: '午夜紫', desc: '深邃 · 夜航紫调', swatch: ['#a78bfa', '#f472b6', '#0c0a17'] },
+  { id: 'paper', name: '暖纸极简', desc: '明快 · 米白纸张', swatch: ['#c2410c', '#d97706', '#faf7f2'] },
 ];
 function applySkin(id) {
   if (id) document.documentElement.setAttribute('data-skin', id);
@@ -1254,8 +1347,10 @@ function connectWS() {
         if (PAGE === 'messages') appendMsgBubble(msg);
         else { MSG_UNREAD++; updateMsgBadge(); }
       }
-      // 桌面通知：仅对重要事件（页面不可见时）
-      if (DESKTOP_NOTIF && document.visibilityState !== 'visible') {
+      // 桌面通知：重要事件（页面不可见时）或「关注任务」的变更（必达，可见也弹）
+      const relT = msg.payload?.taskId || ((msg.type === 'task.created' || msg.type === 'task.updated') ? msg.payload?.id : null);
+      const followedNow = !!relT && FOLLOWING.has(relT);
+      if (DESKTOP_NOTIF && (document.visibilityState !== 'visible' || followedNow)) {
         const notifMap = {
           'task.created': '新任务', 'task.claimed': '任务被认领',
           'context.appended': '新上下文', 'review.requested': '新 PR 审核',
@@ -1263,7 +1358,7 @@ function connectWS() {
           'comment.posted': '新评论', 'branch.pushed': '代码推送',
           'message.posted': '新消息', 'file.uploaded': '新文件',
         };
-        if (notifMap[msg.type]) showDesktopNotif(notifMap[msg.type], msg.payload?.title || msg.payload?.text || msg.payload?.branch || msg.payload?.filename || '');
+        if (notifMap[msg.type]) showDesktopNotif((followedNow ? '📌 ' : '') + notifMap[msg.type], msg.payload?.title || msg.payload?.text || msg.payload?.branch || msg.payload?.filename || '');
       }
     }
     if (PAGE === 'activity' || PAGE === 'dashboard') renderCurrent();
@@ -1322,11 +1417,11 @@ function updateBadges() {
 function nav(page) {
   PAGE = page;
   document.querySelectorAll('.nav-item').forEach((el) => el.classList.toggle('active', el.dataset.page === page));
-  $('page-title').textContent = { dashboard:'仪表盘', tasks:'任务板', messages:'消息', files:'共享文件', search:'全局搜索', context:'共享上下文', reviews:'审核 / PR', branches:'分支管理', activity:'活动流', tutorial:'协作教程', onboard:'接入向导', users:'用户管理', settings:'设置' }[page] || page;
+  $('page-title').textContent = { dashboard:'仪表盘', tasks:'任务板', messages:'消息', files:'共享文件', members:'成员在线', analytics:'效率分析', search:'全局搜索', context:'共享上下文', reviews:'审核 / PR', branches:'分支管理', activity:'活动流', tutorial:'协作教程', onboard:'接入向导', users:'用户管理', settings:'设置' }[page] || page;
   renderCurrent();
 }
 function renderCurrent() {
-  ({ dashboard: renderDashboard, tasks: renderTasks, messages: renderMessages, files: renderFiles, search: renderSearch,
+  ({ dashboard: renderDashboard, tasks: renderTasks, messages: renderMessages, files: renderFiles, members: renderMembers, analytics: renderAnalytics, search: renderSearch,
      context: renderContext, reviews: renderReviews,
      branches: renderBranches, activity: renderActivity, tutorial: renderTutorial, onboard: renderOnboard, users: renderUsers, settings: renderSettings }[PAGE] || renderDashboard)();
   // 页面切换动画 + 数字滚动
@@ -1503,11 +1598,22 @@ let DRAG_TASK_ID = null;
 let CTX_Q = '', CTX_TYPE = '';
 let CTX_PENDING_FILES = []; // 待上传的文件 {file, meta?}
 let TASK_PRIORITY = '';
+/* 任务关注（localStorage 持久化）：关注后该任务变更必达（通知打标 + 桌面通知） */
+let FOLLOWING = new Set();
+try { FOLLOWING = new Set(JSON.parse(localStorage.getItem('coagent_following_v1') || '[]')); } catch { FOLLOWING = new Set(); }
+let TASK_FOLLOW_FILTER = false;
+function saveFollowing() { localStorage.setItem('coagent_following_v1', JSON.stringify([...FOLLOWING])); }
+function toggleFollow(id) {
+  if (FOLLOWING.has(id)) { FOLLOWING.delete(id); toast('已取消关注', 'ok'); }
+  else { FOLLOWING.add(id); toast('已关注：该任务变更必达', 'ok'); }
+  saveFollowing(); renderTasks();
+}
 let BATCH_MODE = false;
 let BATCH_SELECTED = new Set();
 function renderTasks() {
   let tasks = CACHE.tasks;
   if (TASK_PRIORITY) tasks = tasks.filter((t) => t.priority === TASK_PRIORITY);
+  if (TASK_FOLLOW_FILTER) tasks = tasks.filter((t) => FOLLOWING.has(t.id));
   const open = tasks.filter((t) => t.status === 'open');
   const claimed = tasks.filter((t) => t.status === 'claimed');
   const done = tasks.filter((t) => t.status === 'done');
@@ -1532,6 +1638,7 @@ function renderTasks() {
           <option value="high">高</option><option value="medium">中</option><option value="low">低</option>
         </select>
         <button class="btn ghost sm" onclick="toggleBatchMode()">${BATCH_MODE ? '✓ 退出批量' : '☐ 批量操作'}</button>
+        <button class="btn ghost sm" onclick="TASK_FOLLOW_FILTER=!TASK_FOLLOW_FILTER;renderTasks()" title="只看已关注的任务">${TASK_FOLLOW_FILTER ? '🔔 关注中' : '🔕 只看关注'}</button>
         ${BATCH_MODE && BATCH_SELECTED.size > 0 ? `
           <span style="font-size:12px;color:var(--accent)">已选 ${BATCH_SELECTED.size} 项</span>
           <button class="btn sm" onclick="batchAction('done')">✓ 批量完成</button>
@@ -1581,6 +1688,7 @@ function taskCardHTML(t) {
     <div class="t-actions">
       ${t.status === 'open' ? `<button class="btn ghost sm" onclick="claimTask('${t.id}')">认领</button>` : ''}
       ${t.assignee === ME.userId && t.status !== 'done' ? `<button class="btn ghost sm" onclick="doneTask('${t.id}')">✓ 完成</button>` : ''}
+      <button class="btn ghost sm ${FOLLOWING.has(t.id) ? '' : ''}" onclick="toggleFollow('${t.id}')" title="${FOLLOWING.has(t.id) ? '已关注 · 取消关注' : '关注：该任务变更必达'}">${FOLLOWING.has(t.id) ? '🔔' : '🔕'}</button>
       <button class="btn ghost sm" onclick="openTaskDetail('${t.id}')">详情</button>
     </div>
   </div>`;
@@ -2459,6 +2567,130 @@ function searchSection(title, body) {
 }
 
 /* ============================================================
+   成员在线（实时拓扑：谁在线 / 在干什么 / 人格视角）
+   ============================================================ */
+function renderMembers() {
+  const s = CACHE.stats || {};
+  const members = s.members || [];
+  const online = new Set(s.onlineUsers || []);
+  const contrib = new Map((s.contributors || []).map((c) => [c.id, c]));
+  // 最近活跃：从事件流统计每人最后一条事件
+  const lastActive = {};
+  for (const ev of (CACHE.events || []).slice(-400)) {
+    if (ev.authorId && !lastActive[ev.authorId]) lastActive[ev.authorId] = ev.ts;
+  }
+  const onlineCount = online.size;
+  $('content').innerHTML = `
+    <div class="dash-hero">
+      <div class="dash-hero-inner">
+        <div>
+          <div class="dash-greet">成员在线 · <span class="grad-text">${onlineCount}</span>/<span class="grad-text">${members.length}</span> 在线</div>
+          <div class="dash-sub">实时拓扑 · WebSocket 心跳驱动 · 人格视角一目了然</div>
+        </div>
+        <div style="display:flex;gap:8px">
+          <button class="btn ghost" onclick="nav('users')">👥 用户管理</button>
+          <button class="btn" onclick="nav('analytics')">📈 效率分析</button>
+        </div>
+      </div>
+    </div>
+    <div class="member-grid stagger">
+      ${members.length ? members.map((m) => {
+        const isOnline = online.has(m.id);
+        const c = contrib.get(m.id);
+        const p = m.persona ? PERSONA_MAP[m.id] : null;
+        const pl = p ? PERSONA_LIB.find((x) => x.id === p.id) : null;
+        const last = lastActive[m.id];
+        return `<div class="member-card ${isOnline ? 'on' : ''}">
+          <div class="member-head">
+            <div class="member-ava">${pl ? pl.emoji : (m.name || m.id).slice(0, 1).toUpperCase()}</div>
+            <div class="member-info">
+              <div class="member-name">${esc(m.name || m.id)} ${m.id === ME.userId ? '<span class="chip accent" style="font-size:9px">我</span>' : ''}</div>
+              <div class="member-id">${esc(m.id)}</div>
+            </div>
+            <span class="member-dot ${isOnline ? 'on' : ''}" title="${isOnline ? '在线' : '离线'}"></span>
+          </div>
+          <div class="member-body">
+            <div class="member-persona">${pl ? `${pl.emoji} ${esc(pl.name)} · ${esc(pl.tag)}` : (p ? '✍️ 自定义人格' : '<span style="color:var(--text-mute)">未绑定人格</span>')}</div>
+            <div class="member-stats">
+              <span>🔥 ${c?.count ?? 0} 次动作</span>
+              <span>${isOnline ? '<span style="color:var(--ok)">● 在线</span>' : `<span style="color:var(--text-mute)">○ 离线${last ? ' · ' + timeAgo(last) : ''}</span>`}</span>
+            </div>
+          </div>
+        </div>`;
+      }).join('') : '<div class="empty"><div class="icon">🟢</div><div class="text">暂无成员</div></div>'}
+    </div>
+  `;
+}
+
+/* ============================================================
+   效率分析（成员贡献 / 类型分布 / 趋势）
+   ============================================================ */
+function renderAnalytics() {
+  const s = CACHE.stats || {};
+  const members = s.members || [];
+  const contrib = (s.contributors || []).slice().sort((a, b) => b.count - a.count);
+  // 每人事件类型分布（近 400 条）
+  const typeDist = {};
+  for (const ev of (CACHE.events || []).slice(-400)) {
+    if (!ev.authorId) continue;
+    const k = ev.type.split('.')[0];
+    typeDist[ev.authorId] = typeDist[ev.authorId] || {};
+    typeDist[ev.authorId][k] = (typeDist[ev.authorId][k] || 0) + 1;
+  }
+  const TYPE_ICON = { task: '📋', context: '💬', comment: '💭', review: '🔍', branch: '🌿', message: '🗨️', file: '📁', agent: '🤖' };
+  const top = contrib.slice(0, 6);
+  const maxCount = top[0]?.count || 1;
+  const typeColors = { task: 'var(--info)', context: 'var(--accent)', comment: 'var(--warn)', review: 'var(--purple)', branch: 'var(--ok)', message: 'var(--info)', file: 'var(--warn)', agent: 'var(--purple)' };
+  $('content').innerHTML = `
+    <div class="page-header"><h2>效率分析</h2><p>团队贡献排行 · 事件类型分布 · 14 天趋势</p></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+      <div class="card chart-card">
+        <div class="card-title"><span>🏆 成员贡献榜（近 7 天）</span><span class="card-badge">${contrib.length} 人</span></div>
+        <div style="display:flex;flex-direction:column;gap:10px;padding:6px 0">
+          ${top.length ? top.map((c, i) => `
+            <div class="contrib-row">
+              <span class="rank ${i < 3 ? 'top' : ''}">${i + 1}</span>
+              <span style="font-weight:600;font-size:12.5px;min-width:110px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(c.name)}</span>
+              <div class="contrib-bar"><div style="width:${Math.max(4, Math.round(c.count / maxCount * 100))}%"></div></div>
+              <span style="font-family:var(--mono);font-size:11px;color:var(--text-sub);min-width:34px;text-align:right">${c.count}</span>
+            </div>`).join('') : '<div class="empty"><div class="text">暂无数据</div></div>'}
+        </div>
+      </div>
+      <div class="card chart-card">
+        <div class="card-title"><span>🧩 成员动作构成</span><span class="card-badge">近 400 条事件</span></div>
+        <div style="display:flex;flex-direction:column;gap:9px;padding:6px 0;max-height:320px;overflow-y:auto">
+          ${members.map((m) => {
+            const d = typeDist[m.id] || {};
+            const items = Object.entries(d);
+            if (!items.length) return `<div class="contrib-row" style="opacity:.55"><span style="min-width:110px;font-size:12px;font-weight:600">${esc(m.name || m.id)}</span><span style="font-size:11px;color:var(--text-mute)">暂无动作</span></div>`;
+            return `<div class="contrib-row">
+              <span style="min-width:110px;font-size:12px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(m.name || m.id)}</span>
+              <div style="display:flex;gap:4px;flex-wrap:wrap;flex:1">
+                ${items.slice(0, 5).map(([t, n]) => `<span class="type-pill" style="border-color:${typeColors[t] || 'var(--border)'};color:${typeColors[t] || 'var(--text-sub)'}">${TYPE_ICON[t] || '📌'} ${t} ×${n}</span>`).join('')}
+              </div>
+            </div>`;
+          }).join('')}
+        </div>
+      </div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+      <div class="card chart-card">
+        <div class="card-title"><span>📈 近 14 天活动趋势</span><span class="card-badge">全量事件</span></div>
+        <div class="chart-container">${barChart(s.daily || [], { width: 340, height: 170 })}</div>
+      </div>
+      <div class="card chart-card">
+        <div class="card-title"><span>🎯 任务状态分布</span><span class="card-badge">${(s.tasks?.byStatus?.open || 0) + (s.tasks?.byStatus?.claimed || 0) + (s.tasks?.byStatus?.done || 0)} 项</span></div>
+        ${donutChart([
+          { label: '待认领', value: s.tasks?.byStatus?.open || 0, color: 'var(--info)' },
+          { label: '进行中', value: s.tasks?.byStatus?.claimed || 0, color: 'var(--warn)' },
+          { label: '已完成', value: s.tasks?.byStatus?.done || 0, color: 'var(--ok)' },
+        ], { size: 140 })}
+      </div>
+    </div>
+  `;
+}
+
+/* ============================================================
    活动流
    ============================================================ */
 async function renderActivity() {
@@ -3052,6 +3284,8 @@ async function filterCmd(q) {
     { icon: '🔍', text: '发起 PR 审核', sub: '请求合入 main', action: () => { closeCmd(); nav('reviews'); } },
     { icon: '👤', text: '开户邀请同学', sub: '用户管理', action: () => { closeCmd(); nav('users'); } },
     { icon: '📊', text: '前往仪表盘', sub: '概览统计', action: () => { closeCmd(); nav('dashboard'); } },
+    { icon: '🟢', text: '查看成员在线', sub: '实时拓扑 · 谁在干什么', action: () => { closeCmd(); nav('members'); } },
+    { icon: '📈', text: '查看效率分析', sub: '贡献榜 · 类型分布 · 趋势', action: () => { closeCmd(); nav('analytics'); } },
     { icon: '⚡', text: '查看活动流', sub: '事件时间线', action: () => { closeCmd(); nav('activity'); } },
     { icon: '🌓', text: '切换主题', sub: '深色/浅色', action: () => { closeCmd(); toggleTheme(); } },
   ];
@@ -3112,8 +3346,11 @@ function notifyMeta(ev) {
   return { ...m, text: m.text || ev.type };
 }
 function notifyPush(ev) {
+  const p = ev.payload || {};
+  const relTask = p.taskId || ((ev.type === 'task.created' || ev.type === 'task.updated') ? p.id : null);
+  const followed = !!relTask && FOLLOWING.has(relTask);
   NOTIFS = NOTIFS.filter((n) => n.seq !== ev.seq);
-  NOTIFS.unshift({ seq: ev.seq, type: ev.type, authorId: ev.authorId, ts: ev.ts, payload: ev.payload, read: false });
+  NOTIFS.unshift({ seq: ev.seq, type: ev.type, authorId: ev.authorId, ts: ev.ts, payload: ev.payload, read: false, followed });
   saveNotifs();
   UNREAD_COUNT = NOTIFS.filter((n) => !n.read).length;
   updateNotifDot();
@@ -3138,7 +3375,7 @@ function toggleNotif() {
       return `<div class="notif-item ${n.read ? '' : 'unread'}" onclick="notifOpen('${esc(n.type)}')">
         <div class="n-icon">${m.icon}</div>
         <div class="n-body">
-          <div class="n-text">${esc(m.text)}</div>
+          <div class="n-text">${n.followed ? '<span class="chip accent" style="font-size:9px;margin-right:4px">📌 关注</span>' : ''}${esc(m.text)}</div>
           <div class="n-meta">${esc(n.authorId)} · ${timeAgo(n.ts)}${n.read ? '' : ' <span class="chip err" style="font-size:9px">新</span>'}</div>
         </div>
       </div>`;

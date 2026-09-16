@@ -776,6 +776,8 @@ export function createHub() {
         return { total: all.length, size: all.reduce((s, f) => s + f.size, 0), byType };
       })(),
       users: loadUsers().length,
+      // 成员概要（全员可读，用于成员在线拓扑 / 分析页）：不含 token / scopes 等敏感字段
+      members: loadUsers().map((u) => ({ id: u.id, name: u.name ?? null, persona: u.persona ?? null, createdAt: u.createdAt ?? null })),
       onlineUsers: bus?.onlineUsers?.() ?? [],
       lastSeq: eventLog.lastSeq,
       wsConnections: bus?.count ?? 0,

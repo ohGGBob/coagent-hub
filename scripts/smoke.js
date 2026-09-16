@@ -643,6 +643,11 @@ try {
     ok(Array.isArray(stats.taskDoneDaily) && stats.taskDoneDaily.length === 14, '/stats 返回近 14 天任务燃尽');
     ok(stats.taskDoneDaily.every((d) => typeof d.count === 'number' && typeof d.accum === 'number'), '燃尽条目含当日完成与累计');
     ok(Array.isArray(stats.heatmap), '/stats 返回成员热力图');
+    ok(Array.isArray(stats.members), '/stats 返回成员概要（成员在线拓扑数据源）');
+    if (stats.members.length) {
+      ok(stats.members.every((m) => m.id && 'name' in m), '成员概要含 id 与 name');
+      ok(stats.members.every((m) => !('token' in m) && !('scopes' in m)), '成员概要不含 token/scopes 敏感字段');
+    }
     if (stats.heatmap.length) {
       ok(stats.heatmap[0].days.length === 7, '热力图成员覆盖 7 天');
       ok(stats.heatmap[0].days.every((n) => typeof n === 'number' && n >= 0), '热力图天计数非负');
