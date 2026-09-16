@@ -1026,6 +1026,7 @@ function renderDashboard() {
           <div>运行时长：<span style="font-family:var(--mono)">${formatUptime(s.uptime || 0)}</span></div>
           <div>事件序号：<span style="font-family:var(--mono)">${LAST_SEQ}</span></div>
           <div>注册用户：${s.users || 0} 人</div>
+          <div>数据占用：<span style="font-family:var(--mono)">${formatBytes(s.dataSize || 0)}</span><span style="color:var(--text-mute)">（代码仓 ${formatBytes(s.repoSize || 0)}）</span></div>
         </div>
       </div>
     </div>

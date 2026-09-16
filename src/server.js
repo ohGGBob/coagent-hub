@@ -508,7 +508,8 @@ export function createHub() {
   // ---------- 事件回放 ----------
   add('GET', /^\/events$/, 'events:read', ({ url }) => {
     const after = Number(url.searchParams.get('after') ?? 0);
-    const limit = Number(url.searchParams.get('limit') ?? 500);
+    // limit 有上限：防止单次回放把整个事件文件拉进内存
+    const limit = Math.min(Math.max(Number(url.searchParams.get('limit') ?? 500) | 0, 1), 5000);
     if (!Number.isInteger(after) || after < 0) throw badRequest('after 必须为非负整数');
     // type 过滤（逗号分隔多值）：消息页等只关心特定事件的消费方用，避免拉全量再过滤
     const typeParam = url.searchParams.get('type');
@@ -731,6 +732,9 @@ export function createHub() {
       taskDoneDaily,
       heatmap,
       weekStart: weekStartKey,
+      dataSize: dirSize(PATHS.data, { skip: new Set(['repo.git']) }),
+      repoSize: dirSize(PATHS.repo),
+      eventsFileSize: fs.existsSync(PATHS.events) ? fs.statSync(PATHS.events).size : 0,
     };
   });
 
@@ -1050,6 +1054,27 @@ function readJsonlSafe(file) {
       try { return JSON.parse(l); } catch { return null; }
     }).filter(Boolean);
   } catch { return []; }
+}
+
+/**
+ * 目录总字节数（递归；可跳过子目录，如巨型 repo.git）。
+ * @param {string} dir
+ * @param {{skip?: Set<string>}} [opts]
+ */
+function dirSize(dir, opts = {}) {
+  const skip = opts.skip ?? new Set();
+  let total = 0;
+  let entries;
+  try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return 0; }
+  for (const e of entries) {
+    if (skip.has(e.name)) continue;
+    const p = path.join(dir, e.name);
+    try {
+      if (e.isDirectory()) total += dirSize(p, { skip });
+      else total += fs.statSync(p).size;
+    } catch { /* 忽略瞬时不可读 */ }
+  }
+  return total;
 }
 
 /**
