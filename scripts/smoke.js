@@ -560,6 +560,38 @@ try {
     await rejects(() => erinClient.request('GET', '/admin/audit'), 403, '非管理员不能读审计日志');
   }
 
+  // ------------------------------------------------------------ 12.6 商用体验：备份 / 开机自启 / 贡献榜
+  section('12.6 商用体验：自动备份 / 开机自启 / 成员贡献榜');
+  {
+    // 自动备份：手动触发 + 列表 + 下载 + 审计留痕
+    const before = await alice.request('GET', '/admin/backups');
+    ok(Array.isArray(before.backups), '备份列表接口返回数组');
+    const bkp = await alice.request('POST', '/admin/backup');
+    ok(bkp.ok === true && /^coagent-backup-\d{8}-\d{6}\.json$/.test(bkp.file), '手动备份成功且文件名带时间戳');
+    const list = await alice.request('GET', '/admin/backups');
+    ok(list.backups.some((b) => b.name === bkp.file), '备份出现在列表中');
+    const dl = await alice.request('GET', `/admin/backups/${bkp.file}`);
+    ok(dl.kind === 'coagent-backup' && dl.version === PKG_VERSION && dl.users, '备份文件可下载且为完整快照');
+    await rejects(() => alice.request('GET', '/admin/backups/..%2F..%2Fusers.json'), 400, '备份下载拒绝路径穿越');
+    await rejects(() => new HubClient({ hubUrl, token: erinToken }).request('POST', '/admin/backup'), 403, '非管理员不能手动备份');
+    const audit2 = await alice.request('GET', '/admin/audit?limit=50');
+    ok(audit2.audit.some((a) => a.action === 'data.backup'), '审计包含 data.backup');
+
+    // 开机自启：非 SEA 环境返回 supported=false（不抛错、不写注册表）
+    const auto = await alice.request('GET', '/admin/autostart');
+    ok(auto.supported === false && typeof auto.enabled === 'boolean', '开机自启状态查询（非打包环境 supported=false）');
+    await rejects(() => alice.request('POST', '/admin/autostart', { enabled: true }), 400, '非打包环境拒绝开启自启');
+
+    // 成员贡献榜：/stats 返回 contributors，且按事件数倒序
+    const stats = await alice.request('GET', '/stats');
+    ok(Array.isArray(stats.contributors), '/stats 返回成员贡献榜');
+    if (stats.contributors.length) {
+      ok(stats.contributors.every((c) => c.count > 0 && c.name), '贡献榜条目含姓名与事件数');
+      ok(stats.contributors[0].count >= stats.contributors[stats.contributors.length - 1].count, '贡献榜按事件数倒序');
+    }
+    await rejects(() => new HubClient({ hubUrl, token: erinToken }).request('GET', '/admin/backups'), 403, '非管理员不能读备份列表');
+  }
+
   // ------------------------------------------------------------ 13. 收尾一致性
   section('13. 一致性');
   const finalEvents = await alice.replay();

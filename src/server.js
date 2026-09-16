@@ -34,6 +34,8 @@ import { attachWebSocket } from './ws.js';
 import { createWebhookStore } from './webhooks.js';
 import * as license from './license.js';
 import { appendAudit, recentAudit } from './audit.js';
+import * as backup from './backup.js';
+import * as autostart from './autostart.js';
 
 const MAX_BODY = 128 * 1024 * 1024;
 
@@ -369,6 +371,42 @@ export function createHub() {
     return { audit: recentAudit(Math.min(Math.max(limit, 1), 500)) };
   });
 
+  // ---------- 数据备份（基础可靠性，全版本可用） ----------
+  add('GET', /^\/admin\/backups$/, 'admin:write', () => ({
+    backups: backup.listBackups(),
+    last: backup.lastBackupInfo(),
+    autoHours: Number(process.env.COAGENT_BACKUP_HOURS ?? 24),
+    keep: Number(process.env.COAGENT_BACKUP_KEEP ?? 7),
+  }));
+
+  add('POST', /^\/admin\/backup$/, 'admin:write', ({ user }) => {
+    const done = backup.runBackup();
+    appendAudit(user.id, 'data.backup');
+    return { ok: true, ...done };
+  });
+
+  add('GET', /^\/admin\/backups\/([^/]+)$/, 'admin:write', ({ params, user }) => {
+    let buf;
+    try {
+      buf = backup.readBackup(dec(params[0]));
+    } catch (e) {
+      throw badRequest(e.message);
+    }
+    appendAudit(user.id, 'data.backup_download', params[0]);
+    return { raw: buf, contentType: 'application/json; charset=utf-8', filename: params[0] };
+  });
+
+  // ---------- 开机自启（桌面应用设置） ----------
+  add('GET', /^\/admin\/autostart$/, 'admin:write', () => autostart.getAutostart());
+
+  add('POST', /^\/admin\/autostart$/, 'admin:write', ({ body, user }) => {
+    if (!autostart.supported()) throw badRequest(autostart.getAutostart().reason);
+    const enabled = Boolean(body?.enabled);
+    const res = autostart.setAutostart(enabled);
+    appendAudit(user.id, enabled ? 'autostart.enabled' : 'autostart.disabled');
+    return { ok: true, ...res };
+  });
+
   // ---------- 授权与试用（商用化） ----------
   add('GET', /^\/license$/, AUTH_ONLY, () => license.current());
 
@@ -625,6 +663,23 @@ export function createHub() {
     const allBranches = repo.listBranches();
     const ctxEntries = await context.query({ limit: 9999 });
     const allComments = readJsonlSafe(PATHS.comments);
+    const usersById = loadUsers().reduce((m, u) => { m[u.id] = u; return m; }, {});
+    // 成员贡献榜：最近 7 天事件按作者统计（取 Top 8，展示活跃度）
+    const weekAgo = Date.now() - 7 * 86_400_000;
+    const contrib = new Map();
+    for (const ev of eventLog.since(0, 50_000)) {
+      if (!ev?.authorId) continue;
+      const ts = Date.parse(ev.ts ?? ev.t ?? '');
+      if (!ts || ts < weekAgo) continue;
+      const cur = contrib.get(ev.authorId) ?? { count: 0, actions: {} };
+      cur.count++;
+      cur.actions[ev.type] = (cur.actions[ev.type] ?? 0) + 1;
+      contrib.set(ev.authorId, cur);
+    }
+    const contributors = [...contrib.entries()]
+      .map(([id, v]) => ({ id, name: usersById[id]?.name ?? id, count: v.count, actions: v.actions }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 8);
     return {
       tasks: taskStats,
       context: { total: ctxEntries.length, byType: ctxEntries.reduce((acc, e) => { acc[e.type] = (acc[e.type] ?? 0) + 1; return acc; }, {}) },
@@ -635,6 +690,7 @@ export function createHub() {
       lastSeq: eventLog.lastSeq,
       wsConnections: bus?.count ?? 0,
       uptime: Math.floor((Date.now() - new Date(metrics.startedAt).getTime()) / 1000),
+      contributors,
     };
   });
 
@@ -930,6 +986,11 @@ export function createHub() {
     });
   }
 
+  // ---------- 自动备份调度（启动时检查 + 每小时复查，到点自动备份） ----------
+  backup.maybeAutoBackup();
+  const backupTimer = setInterval(() => { backup.maybeAutoBackup(); }, 60 * 60 * 1000);
+  backupTimer.unref?.();
+
   return { server, eventLog, context, tasks, reviews, comments, files, webhooks, bus, close, metrics };
 }
 
@@ -959,10 +1020,14 @@ function readJsonlSafe(file) {
 function sendJson(res, status, payload) {
   if (payload && payload._skip) return; // 304 等已在 handler 中结束响应
   if (payload && payload.raw instanceof Buffer) {
-    res.writeHead(status, {
+    const headers = {
       'Content-Type': payload.contentType ?? 'application/octet-stream',
       'Content-Length': payload.raw.length,
-    });
+    };
+    if (payload.filename) {
+      headers['Content-Disposition'] = `attachment; filename="${encodeURIComponent(payload.filename)}"`;
+    }
+    res.writeHead(status, headers);
     return res.end(payload.raw);
   }
   const buf = Buffer.from(JSON.stringify(payload, null, 2) + '\n', 'utf8');

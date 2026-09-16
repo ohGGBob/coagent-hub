@@ -65,13 +65,14 @@ ${C.gray('Agent 自助接入：浏览器或 curl 打开  http://<主机IP>:8787/
 `.trim();
 }
 
-/** 解析 serve 子命令的 --port/--dir/--no-browser */
+/** 解析 serve 子命令的 --port/--dir/--no-browser/--autostart */
 function parseServeFlags(argv) {
-  const out = { port: undefined, dir: undefined, noBrowser: false };
+  const out = { port: undefined, dir: undefined, noBrowser: false, autostart: false };
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === '--port') out.port = Number(argv[++i]);
     else if (argv[i] === '--dir') out.dir = argv[++i];
     else if (argv[i] === '--no-browser') out.noBrowser = true;
+    else if (argv[i] === '--autostart') out.autostart = true;
   }
   return out;
 }
@@ -198,8 +199,8 @@ async function serve(argv) {
     );
   }
 
-  // 自动打开应用窗口（独立窗口形态；--no-browser 可禁用）
-  if (!flags.noBrowser) {
+  // 自动打开应用窗口（独立窗口形态；--no-browser 可禁用；开机自启时不开窗口）
+  if (!flags.noBrowser && !flags.autostart) {
     const panelUrl = `http://localhost:${actualPort}/panel`;
     setTimeout(() => {
       const how = openAppWindow(panelUrl);
@@ -313,6 +314,11 @@ async function uninstall() {
   unregisterInstall();
   try { fs.rmSync(path.join(process.env.USERPROFILE ?? '', 'Desktop', 'CoAgent Hub.lnk'), { force: true }); } catch { /* 忽略 */ }
   try { fs.rmSync(path.join(exeDir, 'data', 'launcher.json'), { force: true }); } catch { /* 忽略 */ }
+  // 清理开机自启（注册表 Run 值 / macOS LaunchAgent）
+  try {
+    const { clearAutostart } = await import('../src/autostart.js');
+    clearAutostart();
+  } catch { /* 忽略 */ }
 
   console.log(`  ✓ 已从「设置 → 应用」移除注册，桌面快捷方式已删除`);
   console.log(`  ${wipe ? '✓ 数据目录将一并删除' : '数据目录保留在 ' + dataDir + '（可手动删除）'}`);

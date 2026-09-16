@@ -3,6 +3,38 @@
 所有重要变更记录在此文件。格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [0.14.0] — 2026-09-16
+
+### 新增（商用体验：自动备份 / 开机自启 / 成员贡献榜 / 安装向导）
+
+**🛡️ 自动数据备份（基础可靠性，所有版本可用）**
+- `data/backup/` 定时生成完整快照（用户/任务/审核/评论/上下文/事件/向量/Webhook/授权/首跑），
+  默认每 24 小时自动备份、保留最近 7 份（`COAGENT_BACKUP_HOURS` / `COAGENT_BACKUP_KEEP` 可调）
+- 端点：`GET /admin/backups`（列表+上次备份时间）、`POST /admin/backup`（手动触发）、
+  `GET /admin/backups/:name`（下载，文件名白名单校验防路径穿越）
+- 备份操作与下载均记入审计日志（data.backup / data.backup_download）
+- 面板设置页新增「自动数据备份」卡片：状态 / 立即备份 / 列表 / 一键下载
+
+**⚡ 开机自启（桌面应用版）**
+- Windows 写 `HKCU\...\Run` 注册表（值指向 `exe serve --autostart`），macOS 写 LaunchAgent plist；
+  `serve --autostart` 静默启动（不弹应用窗口）
+- 端点：`GET /admin/autostart`（状态查询）、`POST /admin/autostart`（开启/关闭，需管理员+本机 exe 环境）
+- 卸载时自动清除自启注册，不残留
+- 面板设置页「开机自启」开关（非打包环境提示不支持）
+
+**🏆 成员贡献榜（面板仪表盘）**
+- `/stats` 新增 `contributors`：近 7 天事件按成员统计（总数 + 动作类型分布），Top 8 倒序
+- 仪表盘新增「成员贡献榜」卡片：🥇🥈🥉 奖牌 + 渐变条形对比 + 事件数
+
+**📄 安装向导体验**
+- 主页面 / 使用说明同步更新：自启、备份、数据目录说明
+- `/admin/export` 响应支持下载文件名（Content-Disposition）
+
+### 变更
+- 冒烟测试 124 → 137 项全绿（新增「12.6 商用体验」小节：备份触发/列表/下载/穿越拒绝/审计留痕/自启查询/贡献榜）
+- 单元测试 51 项全绿；`serve --autostart` 新静默参数
+- 新增 `src/backup.js`（备份快照与轮换）、`src/autostart.js`（注册表/LaunchAgent）
+
 ## [0.13.0] — 2026-09-16
 
 ### 新增（商用化：授权 / Webhook / TLS / 审计）

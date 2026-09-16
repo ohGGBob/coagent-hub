@@ -948,8 +948,29 @@ function renderDashboard() {
         </div>
       </div>
     </div>
+    <div class="card" style="margin-top:16px">
+      <div class="card-title">🏆 成员贡献榜（近 7 天）</div>
+      ${renderContributors(s.contributors)}
+    </div>
   `;
   renderDashActivity();
+}
+function renderContributors(list) {
+  const arr = (list || []).slice(0, 8);
+  if (!arr.length) return '<div class="empty"><div class="text">近 7 天还没有活跃记录，去任务板认领一个任务开始吧</div></div>';
+  const max = Math.max(...arr.map((c) => c.count), 1);
+  const medal = ['🥇', '🥈', '🥉'];
+  return `<div style="display:flex;flex-direction:column;gap:10px">
+    ${arr.map((c, i) => `
+      <div style="display:flex;align-items:center;gap:10px">
+        <span style="width:22px;text-align:center;font-size:15px">${medal[i] || '<span style="font-size:11px;color:var(--text-sub)">' + (i + 1) + '</span>'}</span>
+        <span style="width:130px;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${esc(c.name)}">${esc(c.name)}</span>
+        <div style="flex:1;background:var(--bg-soft);border-radius:6px;height:14px;overflow:hidden">
+          <div style="width:${Math.round((c.count / max) * 100)}%;height:100%;background:linear-gradient(90deg,var(--accent),var(--ok));border-radius:6px"></div>
+        </div>
+        <span style="width:64px;text-align:right;font-size:12px;color:var(--text-sub);font-family:var(--mono)">${c.count} 次</span>
+      </div>`).join('')}
+  </div>`;
 }
 function formatUptime(sec) {
   const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60);
@@ -1806,6 +1827,14 @@ function renderSettings() {
       <p style="font-size:12px;color:var(--text-sub);margin-bottom:10px">导出全部数据（用户/任务/评论/上下文/向量/事件）为 JSON 备份文件，需管理员权限。</p>
       <button class="btn ghost" onclick="exportData()">💾 导出数据备份</button>
     </div>
+    <div class="card"><div class="card-title">🛡️ 自动数据备份</div>
+      <p style="font-size:12px;color:var(--text-sub);margin-bottom:10px">定时自动生成完整快照（用户/任务/审核/评论/上下文/事件/Webhook 等），默认保留最近 7 份；备份是基础可靠性能力，所有版本可用。</p>
+      <div id="backup-body" style="font-size:13px">加载中…</div>
+    </div>
+    <div class="card"><div class="card-title">⚡ 开机自启</div>
+      <p style="font-size:12px;color:var(--text-sub);margin-bottom:10px">登录 Windows 后自动启动 Hub 服务（后台运行，不弹窗口）。仅桌面应用版（exe）支持。</p>
+      <div id="autostart-body" style="font-size:13px">加载中…</div>
+    </div>
     <div class="card"><div class="card-title">软件更新</div>
       <div id="upd-body" style="font-size:13px">检查中…</div>
       <p style="font-size:11px;color:var(--text-mute);margin-top:10px">更新包来自 GitHub Releases；更新会自动下载替换并重启服务（约十几秒，期间短暂掉线），数据不受影响。</p>
@@ -1826,6 +1855,75 @@ function renderSettings() {
   loadLicense();
   loadWebhooks();
   loadAudit();
+  loadBackups();
+  loadAutostart();
+}
+/* ---------- 自动数据备份（基础可靠性） ---------- */
+async function loadBackups() {
+  const el = $('backup-body'); if (!el) return;
+  try {
+    const r = await api('GET', '/admin/backups');
+    const list = r.backups || [];
+    const last = r.last;
+    el.innerHTML = `
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px">
+        <span class="chip ${list.length ? 'ok' : ''}">${list.length ? list.length + ' 份备份' : '尚无备份'}</span>
+        <span style="font-size:12px;color:var(--text-sub)">每 ${esc(r.autoHours)} 小时自动备份 · 保留 ${esc(r.keep)} 份</span>
+        <button class="btn sm" onclick="doBackupNow()">立即备份</button>
+      </div>
+      ${last ? `<p style="font-size:12px;color:var(--text-sub);margin-bottom:8px">上次备份：<span style="font-family:var(--mono)">${esc(last.file)}</span></p>` : ''}
+      ${list.length ? `<div style="display:flex;flex-direction:column;gap:6px;max-height:220px;overflow:auto">
+        ${list.map((b) => `
+          <div style="display:flex;align-items:center;gap:8px;font-size:12px">
+            <span style="font-family:var(--mono);flex:1">${esc(b.name)}</span>
+            <span style="color:var(--text-sub)">${formatBytes(b.size)}</span>
+            <a href="/admin/backups/${encodeURIComponent(b.name)}" download style="color:var(--accent);text-decoration:none">下载</a>
+          </div>`).join('')}
+      </div>` : ''}
+      <p style="font-size:11px;color:var(--text-mute);margin-top:8px">备份文件位于数据目录 backup/ 下，整个 data/ 文件夹一并拷贝即完成迁移。</p>`;
+  } catch (e) {
+    el.innerHTML = `<span style="color:var(--err)">加载失败：${esc(e.message)}</span>`;
+  }
+}
+async function doBackupNow() {
+  try {
+    const r = await api('POST', '/admin/backup');
+    toast('已生成备份：' + r.file, 'ok');
+    loadBackups();
+  } catch (e) { toast('✗ ' + e.message, 'err'); }
+}
+function formatBytes(n) {
+  if (!n) return '0 B';
+  const u = ['B', 'KB', 'MB', 'GB'];
+  let i = 0;
+  while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; }
+  return n.toFixed(n >= 10 || i === 0 ? 0 : 1) + ' ' + u[i];
+}
+/* ---------- 开机自启（桌面应用） ---------- */
+async function loadAutostart() {
+  const el = $('autostart-body'); if (!el) return;
+  try {
+    const r = await api('GET', '/admin/autostart');
+    if (!r.supported) {
+      el.innerHTML = `<span style="font-size:12px;color:var(--text-sub)">${esc(r.reason || '当前环境不支持')}</span>`;
+      return;
+    }
+    el.innerHTML = `
+      <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer">
+        <input type="checkbox" ${r.enabled ? 'checked' : ''} onchange="setAutostart(this.checked)" style="width:16px;height:16px;accent-color:var(--accent)">
+        登录后自动启动 Hub 服务
+      </label>
+      <p style="font-size:11px;color:var(--text-mute);margin-top:8px">当前：${r.enabled ? '<span class="chip ok">已开启</span>' : '<span class="chip">未开启</span>'}</p>`;
+  } catch (e) {
+    el.innerHTML = `<span style="color:var(--err)">加载失败：${esc(e.message)}</span>`;
+  }
+}
+async function setAutostart(enabled) {
+  try {
+    await api('POST', '/admin/autostart', { enabled });
+    toast(enabled ? '已开启开机自启' : '已关闭开机自启', 'ok');
+    loadAutostart();
+  } catch (e) { toast('✗ ' + e.message, 'err'); loadAutostart(); }
 }
 /* ---------- 软件更新（微信式：检查 → 一键更新自动重启） ---------- */
 let UPDATE_STATE = null;
