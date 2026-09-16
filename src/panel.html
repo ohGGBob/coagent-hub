@@ -530,7 +530,7 @@ tr:hover td { background: var(--bg-hover); }
   <aside class="sidebar">
     <div class="sidebar-brand">
       <img class="logo" src="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%20512%20512%22%3E%3Cdefs%3E%3ClinearGradient%20id%3D%22g%22%20x1%3D%220%22%20y1%3D%220%22%20x2%3D%220%22%20y2%3D%221%22%3E%3Cstop%20offset%3D%220%22%20stop-color%3D%22%232bd86a%22%2F%3E%3Cstop%20offset%3D%221%22%20stop-color%3D%22%23059f4c%22%2F%3E%3C%2FlinearGradient%3E%3C%2Fdefs%3E%3Crect%20width%3D%22512%22%20height%3D%22512%22%20rx%3D%22118%22%20fill%3D%22url(%23g)%22%2F%3E%3Cpath%20d%3D%22M96%20164%20a52%2052%200%200%201%2052%20-52%20h216%20a52%2052%200%200%201%2052%2052%20v140%20a52%2052%200%200%201%20-52%2052%20h-166%20l-68%2074%2020%20-74%20h-2%20a52%2052%200%200%201%20-52%20-52%20z%22%20fill%3D%22%23fff%22%2F%3E%3Cpath%20d%3D%22M186%20316%20L198%20208%20L250%20262%20L276%20198%20L302%20262%20L354%20208%20L366%20316%20Z%22%20fill%3D%22%2307c160%22%2F%3E%3Crect%20x%3D%22186%22%20y%3D%22316%22%20width%3D%22180%22%20height%3D%2224%22%20rx%3D%228%22%20fill%3D%22%2307c160%22%2F%3E%3C%2Fsvg%3E" alt="CoAgent">
-      <div><div class="name">CoAgent</div><div class="ver" id="brand-ver">v0.0.0</div></div>
+      <div><div class="name">CoAgent</div><div class="ver" id="brand-ver">v0.0.0 <span id="brand-edition"></span></div></div>
     </div>
     <nav class="nav">
       <div class="nav-section">概览</div>
@@ -861,6 +861,7 @@ async function refreshAll() {
     if (stats.onlineUsers) $('online-count').textContent = stats.onlineUsers.length;
     loadEmbedBadge();
     loadUpdateStatus();
+    loadLicense();
     updateBadges();
     // 消息页由 WS 实时驱动 + 输入框需要保留焦点，不做定时全量重绘
     if (PAGE !== 'messages') renderCurrent();
@@ -1790,6 +1791,17 @@ function renderSettings() {
         <div>监控指标：<code style="font-family:var(--mono);color:var(--accent)">${location.origin}/metrics</code></div>
         <div>实时事件：<code style="font-family:var(--mono);color:var(--accent)">${location.protocol==='https:'?'wss':'ws'}://${location.host}/ws</code></div>
       </div></div>
+    <div class="card"><div class="card-title">授权与版别</div>
+      <div id="lic-body" style="font-size:13px">加载中…</div>
+    </div>
+    <div class="card"><div class="card-title">Webhook 通知</div>
+      <p style="font-size:12px;color:var(--text-sub);margin-bottom:10px">把任务/上下文/审核/消息等事件推送到飞书、企业微信、Slack 等外部系统（需专业版）。投递带 HMAC 签名，接收方可验签；连续失败 10 次自动停用。</p>
+      <div id="wh-body" style="font-size:13px">加载中…</div>
+    </div>
+    <div class="card"><div class="card-title">审计日志</div>
+      <p style="font-size:12px;color:var(--text-sub);margin-bottom:10px">管理操作留痕（用户/Webhook/授权/导出/更新/关机），合规审计用（需专业版）。</p>
+      <div id="audit-body" style="font-size:13px">加载中…</div>
+    </div>
     <div class="card"><div class="card-title">数据管理</div>
       <p style="font-size:12px;color:var(--text-sub);margin-bottom:10px">导出全部数据（用户/任务/评论/上下文/向量/事件）为 JSON 备份文件，需管理员权限。</p>
       <button class="btn ghost" onclick="exportData()">💾 导出数据备份</button>
@@ -1811,6 +1823,9 @@ function renderSettings() {
       <p style="font-size:12px;color:var(--text-mute);margin-top:8px">桌面通知仅在面板不可见时触发，避免打扰。快捷键：<span class="kbd-hint">Ctrl+K</span> 命令面板 · <span class="kbd-hint">N</span> 新任务 · <span class="kbd-hint">/</span> 搜索</p>
     </div>`;
   renderUpdateCard();
+  loadLicense();
+  loadWebhooks();
+  loadAudit();
 }
 /* ---------- 软件更新（微信式：检查 → 一键更新自动重启） ---------- */
 let UPDATE_STATE = null;
@@ -1879,6 +1894,168 @@ async function exportData() {
     a.click(); URL.revokeObjectURL(url);
     toast('数据已导出', 'ok');
   } catch (e) { toast('✗ ' + e.message, 'err'); }
+}
+
+/* ============================================================
+   授权与版别（商用化）
+   ============================================================ */
+let LICENSE = null;
+async function loadLicense() {
+  try { LICENSE = await api('GET', '/license'); } catch { LICENSE = null; }
+  const el = $('lic-body');
+  const badge = $('brand-edition');
+  if (badge) {
+    if (LICENSE?.edition === 'pro' && LICENSE.trial) badge.textContent = '试用';
+    else if (LICENSE?.edition === 'pro') badge.textContent = '专业版';
+    else if (LICENSE) badge.textContent = '社区版';
+    else badge.textContent = '';
+    badge.style.color = LICENSE?.edition === 'pro' ? '#d4a017' : 'var(--text-mute)';
+    badge.style.fontSize = '10px';
+    badge.style.marginLeft = '4px';
+  }
+  if (el && PAGE === 'settings') renderLicenseCard();
+}
+function renderLicenseCard() {
+  const el = $('lic-body'); if (!el) return;
+  const L = LICENSE;
+  if (!L) { el.innerHTML = '<span style="color:var(--text-mute)">授权状态加载失败</span>'; return; }
+  const isAdmin = (ME?.scopes || []).includes('admin:write');
+  const locked = L.features.length === 0;
+  el.innerHTML = `
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px">
+      <span class="chip ${L.edition === 'pro' ? 'ok' : ''}" style="${L.edition === 'pro' ? '' : 'background:var(--bg-mute);color:var(--text-sub)'}">${L.label}</span>
+      ${L.trial?.active ? `<span class="chip warn">⏳ 试用剩余 ${L.trial.daysLeft} 天</span>` : ''}
+      ${L.org ? `<span class="chip info">🏢 ${esc(L.org)}</span>` : ''}
+      ${L.seats ? `<span class="chip">👥 ${L.seats} 席位</span>` : ''}
+      ${L.expiresAt ? `<span class="chip">📅 有效期至 ${L.expiresAt.slice(0, 10)}</span>` : ''}
+    </div>
+    ${L.detail ? `<p style="font-size:12px;color:var(--err);margin-bottom:10px">⚠ ${esc(L.detail)}</p>` : ''}
+    <p style="font-size:12px;color:var(--text-sub);margin-bottom:8px">功能：${L.features.length ? L.features.map((f) => `<span class="chip" style="margin-right:4px">${f}</span>`).join('') : '<span style="color:var(--err)">基础协作（任务/上下文/评论/审核/消息/文件/搜索）</span>'}</p>
+    ${locked ? `<p style="font-size:12px;color:var(--warn)">试用已结束。激活专业版授权即可解锁 Webhook / TLS / 审计 / 数据导出 / 自更新 / 语义检索。</p>` : ''}
+    ${isAdmin ? `
+      <div class="form-row" style="margin-top:10px">
+        <textarea class="textarea" id="lic-key" placeholder="粘贴授权 key（找 CoAgent 官方签发）" style="min-height:60px;font-family:var(--mono);font-size:11px"></textarea>
+      </div>
+      <div style="display:flex;gap:8px;margin-top:8px">
+        <button class="btn" onclick="activateLicense()">🔑 激活授权</button>
+        ${L.source === 'file' ? `<button class="btn ghost" onclick="removeLicense()">移除授权</button>` : ''}
+      </div>` : `<p style="font-size:12px;color:var(--text-mute)">仅管理员可激活/移除授权</p>`}
+  `;
+}
+async function activateLicense() {
+  const key = $('lic-key')?.value?.trim();
+  if (!key) return toast('请先粘贴授权 key', 'err');
+  try {
+    await api('POST', '/license', { key });
+    toast('授权激活成功', 'ok');
+    await loadLicense();
+  } catch (e) { toast('✗ ' + e.message, 'err'); }
+}
+async function removeLicense() {
+  if (!confirm('移除授权后将回到试用/社区状态，确定？')) return;
+  try { await api('DELETE', '/license'); toast('已移除授权', 'ok'); await loadLicense(); }
+  catch (e) { toast('✗ ' + e.message, 'err'); }
+}
+
+/* ============================================================
+   Webhook 通知（专业版）
+   ============================================================ */
+let WEBHOOKS = [];
+const WH_EVENTS = ['task.created','task.updated','task.claimed','task.released','context.appended','context.retracted','review.requested','review.approved','review.rejected','review.merged','comment.posted','message.posted','branch.created','branch.pushed','agent.status'];
+async function loadWebhooks() {
+  const el = $('wh-body'); if (!el) return;
+  try {
+    const r = await api('GET', '/webhooks');
+    WEBHOOKS = r.webhooks || [];
+    renderWebhooks();
+  } catch (e) {
+    el.innerHTML = `<span style="color:var(--text-mute)">${esc(e.message)}</span>`;
+  }
+}
+function renderWebhooks() {
+  const el = $('wh-body'); if (!el) return;
+  if (!WEBHOOKS.length) {
+    el.innerHTML = `<div style="color:var(--text-mute);margin-bottom:10px">尚未配置 Webhook</div>${webhookFormHTML()}`;
+    return;
+  }
+  el.innerHTML = WEBHOOKS.map((w) => `
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:8px 0;border-bottom:1px solid var(--border)">
+      <span class="chip ${w.enabled ? 'ok' : ''}" style="${w.enabled ? '' : 'background:var(--bg-mute);color:var(--text-sub)'}">${w.enabled ? '投递中' : '已停用'}</span>
+      <b>${esc(w.name)}</b>
+      <code style="font-family:var(--mono);font-size:11px;color:var(--text-sub);max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(w.url)}</code>
+      <span style="font-size:11px;color:var(--text-mute)">${w.events.length} 类事件${w.hasSecret ? ' · 已签名' : ''}</span>
+      ${w.lastStatus ? `<span style="font-size:11px;color:${w.lastStatus >= 200 && w.lastStatus < 300 ? 'var(--ok)' : 'var(--err)'}">最近 HTTP ${w.lastStatus}</span>` : ''}
+      ${w.lastError ? `<span style="font-size:11px;color:var(--err)" title="${esc(w.lastError)}">失败×${w.consecutiveFailures || 0}</span>` : ''}
+      <span style="margin-left:auto;display:flex;gap:6px">
+        <button class="btn ghost sm" onclick="testWebhook('${w.id}')">测试</button>
+        <button class="btn ghost sm" onclick="toggleWebhook('${w.id}', ${!w.enabled})">${w.enabled ? '停用' : '启用'}</button>
+        <button class="btn danger sm" onclick="deleteWebhook('${w.id}')">删除</button>
+      </span>
+    </div>`).join('') + webhookFormHTML();
+}
+function webhookFormHTML() {
+  return `
+    <div style="margin-top:12px;padding-top:10px;border-top:1px solid var(--border)">
+      <div style="font-size:12px;color:var(--text-sub);margin-bottom:8px">➕ 新建 Webhook</div>
+      <div class="form-row"><input class="input" id="wh-name" placeholder="名称（如：飞书群通知）" style="flex:1"></div>
+      <div class="form-row"><input class="input" id="wh-url" placeholder="https://open.feishu.cn/open-apis/bot/v2/hook/…" style="flex:1"></div>
+      <div class="form-row"><input class="input" id="wh-secret" placeholder="签名密钥（可选，接收方用它验签）" style="flex:1"></div>
+      <div style="font-size:12px;color:var(--text-sub);margin:8px 0 4px">订阅事件：</div>
+      <div style="display:flex;flex-wrap:wrap;gap:4px 10px;font-size:12px">
+        ${WH_EVENTS.map((e) => `<label style="cursor:pointer"><input type="checkbox" class="wh-ev" value="${e}" ${['task.created','context.appended','review.requested','comment.posted','message.posted','branch.pushed'].includes(e) ? 'checked' : ''}> ${e}</label>`).join('')}
+      </div>
+      <button class="btn" style="margin-top:10px" onclick="saveWebhook()">保存</button>
+    </div>`;
+}
+async function saveWebhook() {
+  const name = $('wh-name')?.value?.trim();
+  const url = $('wh-url')?.value?.trim();
+  const secret = $('wh-secret')?.value?.trim() || undefined;
+  if (!name || !url) return toast('名称与地址必填', 'err');
+  const events = [...document.querySelectorAll('.wh-ev:checked')].map((c) => c.value);
+  try {
+    await api('POST', '/webhooks', { name, url, secret, events });
+    toast('Webhook 已创建', 'ok');
+    await loadWebhooks();
+  } catch (e) { toast('✗ ' + e.message, 'err'); }
+}
+async function toggleWebhook(id, enabled) {
+  try { await api('PATCH', `/webhooks/${id}`, { enabled }); toast(enabled ? '已启用' : '已停用', 'ok'); await loadWebhooks(); }
+  catch (e) { toast('✗ ' + e.message, 'err'); }
+}
+async function deleteWebhook(id) {
+  if (!confirm('删除该 Webhook？')) return;
+  try { await api('DELETE', `/webhooks/${id}`); toast('已删除', 'ok'); await loadWebhooks(); }
+  catch (e) { toast('✗ ' + e.message, 'err'); }
+}
+async function testWebhook(id) {
+  toast('正在发送测试事件…', 'ok');
+  try {
+    const r = await api('POST', `/webhooks/${id}/test`);
+    if (r.ok) toast('测试投递成功（HTTP ' + r.status + '）', 'ok');
+    else toast('投递失败：' + (r.error || `HTTP ${r.status}`), 'err');
+    await loadWebhooks();
+  } catch (e) { toast('✗ ' + e.message, 'err'); }
+}
+
+/* ============================================================
+   审计日志（专业版）
+   ============================================================ */
+async function loadAudit() {
+  const el = $('audit-body'); if (!el) return;
+  try {
+    const r = await api('GET', '/admin/audit?limit=15');
+    const list = r.audit || [];
+    el.innerHTML = list.length ? list.map((a) => `
+      <div style="display:flex;gap:8px;font-size:12px;padding:3px 0;border-bottom:1px dashed var(--border);align-items:baseline">
+        <code style="font-family:var(--mono);color:var(--text-mute);white-space:nowrap">${esc(a.ts.replace('T',' ').slice(5,19))}</code>
+        <code style="font-family:var(--mono);color:var(--accent);white-space:nowrap">${esc(a.userId)}</code>
+        <span>${esc(a.action)}</span>
+        ${Object.keys(a.detail || {}).length ? `<span style="color:var(--text-mute);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:220px">${esc(JSON.stringify(a.detail))}</span>` : ''}
+      </div>`).join('') : '<span style="color:var(--text-mute)">暂无审计记录</span>';
+  } catch (e) {
+    el.innerHTML = `<span style="color:var(--text-mute)">${esc(e.message)}</span>`;
+  }
 }
 
 /* ============================================================

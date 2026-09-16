@@ -38,6 +38,10 @@ export const ROOT = HERE ? path.resolve(HERE, '..') : path.dirname(process.execP
  * @property {string} files    文件附件目录
  * @property {string} fileMeta 文件元数据 files.json
  * @property {string} vectors  向量 sidecar vectors.jsonl（语义检索）
+ * @property {string} webhooks Webhook 配置 webhooks.json
+ * @property {string} audit    审计日志 audit.jsonl
+ * @property {string} firstRun 首次运行时间戳 first-run.json（试用期基准）
+ * @property {string} license  授权文件 license.json
  * @property {string} tmp      临时目录（接收 bundle 用）
  */
 
@@ -56,6 +60,10 @@ export const PATHS = Object.freeze({
   files: path.join(DATA_DIR, 'files'),
   fileMeta: path.join(DATA_DIR, 'files.json'),
   vectors: path.join(DATA_DIR, 'vectors.jsonl'),
+  webhooks: path.join(DATA_DIR, 'webhooks.json'),
+  audit: path.join(DATA_DIR, 'audit.jsonl'),
+  firstRun: path.join(DATA_DIR, 'first-run.json'),
+  license: path.join(DATA_DIR, 'license.json'),
   /** 双击启动器记住的角色选择（host/join） */
   launcherState: path.join(DATA_DIR, 'launcher.json'),
   tmp: path.join(DATA_DIR, 'tmp'),
@@ -65,7 +73,7 @@ export const PATHS = Object.freeze({
 export const PORT = Number(process.env.COAGENT_PORT ?? 8787);
 
 /** 协议版本：源码运行时从 package.json 注入，SEA 打包时由 esbuild define 注入 */
-export const HUB_VERSION = process.env.COAGENT_VERSION ?? '0.12.1';
+export const HUB_VERSION = process.env.COAGENT_VERSION ?? '0.13.0';
 
 /** 受保护分支：只能经审核后的 fast-forward 合入 */
 export const PROTECTED_BRANCHES = Object.freeze(['main']);

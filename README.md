@@ -3,6 +3,16 @@
 让多个人**各用自己的本地 AI agent**，在**各自不同的电脑**上协同开发同一个项目：
 共享上下文、不用互传文件夹、进度互相可见。
 
+## 商用化能力（v0.13.0）
+
+- **🔑 授权与版别**：Ed25519 签名授权（篡改/伪造/过期 fail-closed），社区版 / 专业版分级，
+  无授权自动进入 30 天 Pro 试用；签发工具 `node scripts/license-tool.mjs issue --org "XX" --edition pro --seats 10 --days 365`
+- **🔔 Webhook 通知**：把任务/上下文/审核/评论/消息/推送事件推送到飞书、企微、Slack、Discord 或任意 HTTP 端点，
+  支持 HMAC 签名验签、事件订阅白名单、测试投递、退避重试、连续失败自动停用、SSRF 防护
+- **🔒 HTTPS/TLS**：`COAGENT_TLS_CERT` + `COAGENT_TLS_KEY` 即启用，WebSocket 自动升级 wss
+- **📋 审计日志**：管理操作全程留痕（用户/Webhook/授权/导出/更新/关机），`GET /admin/audit` 查询
+- **💾 数据导出**：一键导出全部数据（含 Webhook 配置）为 JSON 备份
+
 ## 桌面应用版（推荐，Windows / macOS）
 
 整个 Hub + agent CLI 打包成单文件应用（Node SEA），**目标机不需要装 Node**：

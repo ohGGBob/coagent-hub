@@ -17,6 +17,8 @@ import { fileURLToPath } from 'node:url';
 
 /** 仓库根目录（scripts 的上一级），供子进程（CLI）定位入口 */
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+/** 当前版本（package.json 动态读取，避免硬编码漂移） */
+const PKG_VERSION = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version;
 
 // 必须在 import Hub 之前指定数据目录（config 在模块加载时读取环境变量）
 const TMP_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), 'coagent-smoke-'));
@@ -507,7 +509,55 @@ try {
 
     // /update/check：源码模式下返回结构化状态且 supported=false
     const upd = await alice.request('GET', '/update/check');
-    ok(upd.current === '0.12.0' && upd.supported === false && typeof upd.available === 'boolean', '/update/check 返回版本与支持状态（源码模式）');
+    ok(upd.current === PKG_VERSION && upd.supported === false && typeof upd.available === 'boolean', '/update/check 返回版本与支持状态（源码模式）');
+  }
+
+  // ------------------------------------------------------------ 12.5 商用化：授权 / Webhook / 审计
+  section('12.5 商用化：授权 / Webhook / 审计');
+  {
+    // 授权：无授权进入 Pro 试用，全功能开放
+    const lic = await alice.request('GET', '/license');
+    ok(lic.edition === 'pro' && lic.source === 'trial' && lic.trial.daysLeft > 0, '无授权进入 Pro 试用（30 天）');
+    ok(lic.features.includes('webhooks') && lic.features.includes('audit') && lic.features.includes('export'), '试用期专业功能全开');
+    await rejects(() => new HubClient({ hubUrl, token: 'tok_nope' }).request('GET', '/license'), 401, '/license 需登录');
+    const erinClient = new HubClient({ hubUrl, token: erinToken });
+
+    // 授权激活：无效 key 一律拒绝（fail-closed）
+    await rejects(() => alice.request('POST', '/license', { body: { key: 'fake-key' } }), 400, '无效授权 key 被拒');
+    await rejects(() => erinClient.request('POST', '/license', { body: { key: 'fake-key' } }), 403, '非管理员不能激活授权');
+
+    // Webhook CRUD + 事件订阅
+    const whList = await alice.request('GET', '/webhooks');
+    ok(Array.isArray(whList.webhooks), 'Webhook 列表 200');
+    const created = await alice.request('POST', '/webhooks', {
+      body: {
+        name: '冒烟通知',
+        url: 'https://example.com/coagent-hook',
+        events: ['task.created', '不存在的类型'],
+      },
+    });
+    ok(created.webhook && created.webhook.id, 'Webhook 创建成功');
+    ok(created.webhook.events.includes('task.created') && !created.webhook.events.includes('不存在的类型'), '事件白名单过滤生效');
+    ok(created.webhook.secret === undefined && created.webhook.hasSecret === false, 'secret 不外泄');
+
+    // SSRF 防护：私网地址被拒
+    await rejects(() => alice.request('POST', '/webhooks', { body: { name: 'x', url: 'http://127.0.0.1:9000/hook' } }), 400, '私网 Webhook 地址被拒（SSRF）');
+
+    // 更新 / 测试 / 删除
+    const updated = await alice.request('PATCH', `/webhooks/${created.webhook.id}`, { body: { enabled: false, name: '改名' } });
+    ok(updated.webhook.enabled === false && updated.webhook.name === '改名', 'Webhook 更新生效');
+    const test = await alice.request('POST', `/webhooks/${created.webhook.id}/test`);
+    ok(typeof test.ok === 'boolean', 'Webhook 测试投递返回结构化结果');
+    await alice.request('DELETE', `/webhooks/${created.webhook.id}`);
+    const afterDel = await alice.request('GET', '/webhooks');
+    ok(afterDel.webhooks.find((w) => w.id === created.webhook.id) === undefined, 'Webhook 删除生效');
+
+    // 审计日志：管理操作已留痕
+    const audit = await alice.request('GET', '/admin/audit?limit=50');
+    ok(Array.isArray(audit.audit) && audit.audit.length > 0, '审计日志返回管理操作记录');
+    ok(audit.audit.some((a) => a.action === 'user.created'), '审计包含 user.created');
+    ok(audit.audit.some((a) => a.action === 'webhook.created'), '审计包含 webhook.created');
+    await rejects(() => erinClient.request('GET', '/admin/audit'), 403, '非管理员不能读审计日志');
   }
 
   // ------------------------------------------------------------ 13. 收尾一致性

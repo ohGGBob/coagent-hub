@@ -3,6 +3,49 @@
 所有重要变更记录在此文件。格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [0.13.0] — 2026-09-16
+
+### 新增（商用化：授权 / Webhook / TLS / 审计）
+
+**授权与试用（可直接卖的基础设施）**
+- **Ed25519 签名授权**：授权 key = base64(JSON{data, signature})，私钥由维护者持有（不入库），
+  公钥内嵌源码，运行时逐请求校验；任何篡改 / 伪造 / 过期一律拒绝（fail-closed）
+- **版别体系**：社区版（基础协作）/ 专业版（全功能）；无授权自动进入 **30 天 Pro 试用**
+  （以首次运行为基准），到期降级社区版并提示激活
+- **功能门控** `license.can(feature)`：webhooks / tls / audit / export / updates / embed
+  六项专业版功能统一开关，试用期全开，未授权返回 403 FEATURE_LOCKED
+- 端点：`GET /license`（登录可见状态）、`POST /license`（admin 激活）、`DELETE /license`（移除）
+- 签发工具 `scripts/license-tool.mjs`：`issue --org --edition --seats --days` 一键签发 / verify / pubkey
+
+**Webhook 通知系统（外部系统集成）**
+- `POST /webhooks` 创建（名称 / URL / 事件白名单 / 可选 HMAC secret）、`GET` 列表（secret 脱敏）、
+  `PATCH` 更新、`DELETE` 删除、`POST /webhooks/:id/test` 测试投递
+- 事件订阅：15 种业务事件（任务 / 上下文 / 审核 / 评论 / 消息 / 分支 / agent.status）
+- 投递：fire-and-forget 不阻塞主流程，10s 超时，失败退避重试 3 次（1s/5s/15s），
+  连续失败 ≥10 次自动禁用并记录原因
+- **签名**：`X-Hub-Signature: sha256=<HMAC-SHA256(secret, body)>`，接收方可验签防伪造
+- **SSRF 防护**：默认拒绝私网 / 回环 / 链路本地 / 云元数据地址（防放大攻击），
+  `COAGENT_WEBHOOK_ALLOW_PRIVATE=1` 显式放开
+
+**HTTPS / TLS**
+- `COAGENT_TLS_CERT` + `COAGENT_TLS_KEY` 同时配置即启用 HTTPS（专业版功能，未授权自动回退并警告）；
+  WebSocket 自动升级为 wss（面板按 location.protocol 自动适配）
+
+**审计日志（合规留痕）**
+- `data/audit.jsonl` 追加式记录管理操作：用户开户 / 轮换 / 注销、Webhook 管理、
+  授权激活 / 移除、数据导出、关机、自更新、应急重置
+- `GET /admin/audit?limit=N`（admin + 专业版）查询最近记录
+
+### 变更
+- `/admin/export` 增加 webhooks 配置导出；`/update/*`、`/embed/status` 纳入专业版门控
+- 冒烟测试 106 → 124 项全绿（新增授权 / Webhook / 审计 / SSRF 断言小节）
+- 单元测试 36 → 51 项全绿（新增 license / webhooks 两组，含签名校验与投递验签）
+
+### 技术
+- 新增 `src/webhooks.js`（零依赖投递）、`src/license.js`（Ed25519 校验）、`src/audit.js`（审计日志）、
+  `scripts/license-tool.mjs`（签发工具）、`test/license.test.mjs`、`test/webhooks.test.mjs`
+- 面板设置页新增「授权与版别 / Webhook 通知 / 审计日志」三张卡片，顶栏显示版别徽标
+
 ## [0.12.1] — 2026-09-09
 
 ### 安全修复（来源：BUG排查报告-2026-09-08.md，10 项实证验证）

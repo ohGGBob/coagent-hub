@@ -25,3 +25,7 @@ release/
 # ---- 本地工具目录 ----
 .mimosa/
 .probe/
+
+# 授权签发私钥（维护者专属，严禁入库）
+scripts/dev-keys/
+

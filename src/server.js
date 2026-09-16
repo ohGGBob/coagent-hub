@@ -10,6 +10,7 @@
  */
 
 import http from 'node:http';
+import https from 'node:https';
 import fs from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
@@ -30,6 +31,9 @@ import * as repo from './git-repo.js';
 import { HubError, badRequest, notFound, newUpgradeRequired, forbidden } from './errors.js';
 import { guideMarkdown } from './guide.js';
 import { attachWebSocket } from './ws.js';
+import { createWebhookStore } from './webhooks.js';
+import * as license from './license.js';
+import { appendAudit, recentAudit } from './audit.js';
 
 const MAX_BODY = 128 * 1024 * 1024;
 
@@ -133,6 +137,18 @@ export function createHub() {
   // 文件附件存储
   const files = createFileStore();
 
+  // Webhook 通知（商用化集成层）：订阅事件日志，命中即异步投递
+  const webhooks = createWebhookStore();
+  webhooks.hookEvents(eventLog);
+
+  // 授权与试用：启动时打印版别，供运维确认
+  {
+    const lic = license.current();
+    if (lic.detail) console.warn(`[license] ${lic.label}：${lic.detail}`);
+    else if (lic.trial) console.log(`[license] ${lic.label}（试用剩余 ${lic.trial.daysLeft} 天）`);
+    else console.log(`[license] ${lic.label} · ${lic.org} · ${lic.seats} 席位 · 有效期至 ${lic.expiresAt}`);
+  }
+
   // 启动后台回填：为缺向量的历史条目分批补嵌（Ollama 可用时才动手，任何失败静默）。
   // 每 5 分钟重查一次——Ollama 中途上线也能自动补齐。
   const EMBED_BATCH = 32;
@@ -160,6 +176,13 @@ export function createHub() {
 
   const add = (method, re, scope, handler) => routes.push({ method, re, scope, handler });
   const dec = (s) => decodeURIComponent(s);
+
+  /** 商用功能门控：未获授权的功能返回 403（试用期内自动放行） */
+  const gate = (feature) => {
+    if (!license.can(feature)) {
+      throw new HubError(403, 'FEATURE_LOCKED', `「${feature}」为专业版功能，请在设置页激活授权`, { feature });
+    }
+  };
 
   // ---------- 公开端点 ----------
   // healthz 保持轻量：无鉴权端点不暴露用户清单，也不跑 git 子进程（避免被当放大器）
@@ -231,7 +254,9 @@ export function createHub() {
     const ip = req.socket?.remoteAddress ?? '';
     const isLoopback = ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1';
     if (!isLoopback) throw forbidden('应急重置仅允许在主机本机操作');
-    return emergencyReset();
+    const result = emergencyReset();
+    appendAudit('system', 'auth.emergency_reset', { hint: '本机管理员密码恢复' });
+    return result;
   });
 
   // ---------- Agent 自助接入指南（无鉴权：不含任何秘密） ----------
@@ -291,29 +316,35 @@ export function createHub() {
   // ---------- 用户管理（开户 / 轮换 / 注销，admin:write）----------
   add('GET', /^\/users$/, 'admin:write', () => ({ users: listUsersPublic() }));
 
-  add('POST', /^\/users$/, 'admin:write', ({ body }) => {
-    const user = createUser({
+  add('POST', /^\/users$/, 'admin:write', ({ body, user }) => {
+    const newUser = createUser({
       id: body?.id ?? body?.userId,
       name: body?.name,
       scopes: body?.scopes,
       token: body?.token,
     });
+    appendAudit(user.id, 'user.created', { id: newUser.id });
     // token 只在创建和轮换时返回这一次，之后任何接口都不再外泄
-    return { user: { id: user.id, name: user.name, scopes: user.scopes, token: user.token } };
+    return { user: { id: newUser.id, name: newUser.name, scopes: newUser.scopes, token: newUser.token } };
   });
 
-  add('POST', /^\/users\/([^/]+)\/rotate$/, 'admin:write', ({ params }) => {
-    const user = rotateToken(dec(params[0]));
-    return { user: { id: user.id, token: user.token } };
+  add('POST', /^\/users\/([^/]+)\/rotate$/, 'admin:write', ({ params, user }) => {
+    const target = rotateToken(dec(params[0]));
+    appendAudit(user.id, 'user.rotated', { id: target.id });
+    return { user: { id: target.id, token: target.token } };
   });
 
   add('DELETE', /^\/users\/([^/]+)$/, 'admin:write', ({ params, user }) => {
     if (dec(params[0]) === user.id) throw forbidden('不能注销自己（会把自己锁在门外）');
-    return deleteUser(dec(params[0]));
+    const targetId = dec(params[0]);
+    const result = deleteUser(targetId);
+    appendAudit(user.id, 'user.deleted', { id: targetId });
+    return result;
   });
 
   // 数据导出（管理员）：打包所有 JSON 数据为一个 JSON 文件，便于备份迁移
-  add('GET', /^\/admin\/export$/, 'admin:write', () => {
+  add('GET', /^\/admin\/export$/, 'admin:write', ({ user }) => {
+    gate('export');
     const dump = {
       exportedAt: new Date().toISOString(),
       version: HUB_VERSION,
@@ -324,16 +355,82 @@ export function createHub() {
       context: readJsonlSafe(PATHS.context),
       vectors: readJsonlSafe(PATHS.vectors),
       events: readJsonlSafe(PATHS.events),
+      webhooks: readJsonSafe(PATHS.webhooks),
     };
+    appendAudit(user.id, 'data.exported');
     const buf = Buffer.from(JSON.stringify(dump, null, 2), 'utf8');
     return { raw: buf, contentType: 'application/json; charset=utf-8' };
   });
 
+  // 审计日志（专业版）：管理操作留痕，合规审计
+  add('GET', /^\/admin\/audit$/, 'admin:write', ({ url }) => {
+    gate('audit');
+    const limit = Number(url.searchParams.get('limit') ?? 100);
+    return { audit: recentAudit(Math.min(Math.max(limit, 1), 500)) };
+  });
+
+  // ---------- 授权与试用（商用化） ----------
+  add('GET', /^\/license$/, AUTH_ONLY, () => license.current());
+
+  add('POST', /^\/license$/, 'admin:write', ({ body, user }) => {
+    const key = String(body?.key ?? '').trim();
+    if (!key) throw badRequest('授权 key 必填');
+    const payload = license.activate(key);
+    appendAudit(user.id, 'license.activated', { org: payload.org, expiresAt: payload.expiresAt });
+    return { ok: true, license: license.current() };
+  });
+
+  add('DELETE', /^\/license$/, 'admin:write', ({ user }) => {
+    license.deactivate();
+    appendAudit(user.id, 'license.deactivated');
+    return { ok: true, license: license.current() };
+  });
+
+  // ---------- Webhook 通知（专业版，admin:write） ----------
+  add('GET', /^\/webhooks$/, 'admin:write', () => {
+    gate('webhooks');
+    return { webhooks: webhooks.list() };
+  });
+
+  add('POST', /^\/webhooks$/, 'admin:write', ({ body, user }) => {
+    gate('webhooks');
+    const wh = webhooks.create({
+      name: body?.name,
+      url: body?.url,
+      events: body?.events,
+      secret: body?.secret,
+    });
+    appendAudit(user.id, 'webhook.created', { name: wh.name, url: wh.url });
+    return { webhook: { ...wh, secret: undefined } };
+  });
+
+  add('PATCH', /^\/webhooks\/([^/]+)$/, 'admin:write', ({ params, body, user }) => {
+    gate('webhooks');
+    const wh = webhooks.update(dec(params[0]), body ?? {});
+    appendAudit(user.id, 'webhook.updated', { id: wh.id, name: wh.name });
+    return { webhook: wh };
+  });
+
+  add('DELETE', /^\/webhooks\/([^/]+)$/, 'admin:write', ({ params, user }) => {
+    gate('webhooks');
+    webhooks.remove(dec(params[0]));
+    appendAudit(user.id, 'webhook.deleted', { id: dec(params[0]) });
+    return { ok: true };
+  });
+
+  add('POST', /^\/webhooks\/([^/]+)\/test$/, 'admin:write', async ({ params, user }) => {
+    gate('webhooks');
+    const result = await webhooks.test(dec(params[0]));
+    appendAudit(user.id, 'webhook.test', { id: dec(params[0]), ...result });
+    return { ok: result.ok, status: result.status, error: result.error };
+  });
+
   // 优雅退出服务（面板顶栏 ⏻）：仅限本机 + 管理员，局域网成员不能远程关停主机
-  add('POST', /^\/shutdown$/, 'admin:write', ({ req }) => {
+  add('POST', /^\/shutdown$/, 'admin:write', ({ req, user }) => {
     const ip = req.socket?.remoteAddress ?? '';
     const loopback = ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1';
     if (!loopback) throw forbidden('退出服务仅允许在主机本机操作');
+    appendAudit(user.id, 'system.shutdown');
     setTimeout(() => {
       close().then(() => process.exit(0)).catch(() => process.exit(0));
     }, 300);
@@ -341,14 +438,19 @@ export function createHub() {
   });
 
   // ---------- 软件更新（微信式：检查 → 一键自替换重启） ----------
-  add('GET', /^\/update\/check$/, AUTH_ONLY, () => checkLatest(HUB_VERSION));
+  add('GET', /^\/update\/check$/, AUTH_ONLY, () => {
+    gate('updates');
+    return checkLatest(HUB_VERSION);
+  });
 
-  add('POST', /^\/update\/apply$/, 'admin:write', ({ req }) => {
+  add('POST', /^\/update\/apply$/, 'admin:write', ({ req, user }) => {
+    gate('updates');
     // 仅限主机本机操作（局域网成员不能远程更新主机）
     const ip = req.socket?.remoteAddress ?? '';
     const loopback = ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1';
     if (!loopback) throw forbidden('更新仅允许在主机本机操作');
     return applyUpdate(HUB_VERSION).then((result) => {
+      appendAudit(user.id, 'system.updated', { version: result.version });
       // 新二进制已落位：拉起新进程接管端口，本进程优雅退出
       setTimeout(async () => {
         try {
@@ -536,8 +638,16 @@ export function createHub() {
     };
   });
 
-  // ---------- 语义检索状态（Phase 3）----------
+  // ---------- 语义检索状态（Phase 3，专业版）----------
   add('GET', /^\/embed\/status$/, AUTH_ONLY, () => {
+    if (!license.can('embed')) {
+      return {
+        available: false,
+        enabled: false,
+        reason: '语义检索为专业版功能（试用期内可用）',
+        config: embedConfig(),
+      };
+    }
     const st = embedStatus();
     return {
       ...st,
@@ -649,8 +759,36 @@ export function createHub() {
 
   add('GET', /^\/me$/, AUTH_ONLY, ({ user }) => ({ userId: user.id, name: user.name, scopes: user.scopes }));
 
+  // ---------- 传输层（HTTP / HTTPS） ----------
+  // HTTPS：COAGENT_TLS_CERT + COAGENT_TLS_KEY 同时存在时启用（专业版）。
+  // 无授权时不启用并警告——避免未授权用户意外获得 TLS 版功能。
+  const tlsCert = process.env.COAGENT_TLS_CERT ? path.resolve(process.env.COAGENT_TLS_CERT) : null;
+  const tlsKey = process.env.COAGENT_TLS_KEY ? path.resolve(process.env.COAGENT_TLS_KEY) : null;
+  let tlsOptions = null;
+  if (tlsCert && tlsKey) {
+    if (license.can('tls')) {
+      try {
+        tlsOptions = {
+          cert: fs.readFileSync(tlsCert),
+          key: fs.readFileSync(tlsKey),
+        };
+        console.log(`[hub] HTTPS 已启用（${tlsCert}）`);
+      } catch (err) {
+        console.error(`[hub] TLS 证书读取失败，回退 HTTP：${err.message}`);
+      }
+    } else {
+      console.warn('[license] TLS 为专业版功能，未获授权，回退 HTTP 运行（激活授权后配置 COAGENT_TLS_CERT/KEY 生效）');
+    }
+  }
+
   // ---------- 请求分发 ----------
-  const server = http.createServer(async (req, res) => {
+  const server = (tlsOptions ? https.createServer(tlsOptions, async (req, res) => {
+    handleRequest(req, res);
+  }) : http.createServer(async (req, res) => {
+    handleRequest(req, res);
+  }));
+
+  async function handleRequest(req, res) {
     const start = Date.now();
     const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
 
@@ -731,7 +869,7 @@ export function createHub() {
       if (status >= 500 && payload.code !== 'NOT_IMPLEMENTED') console.error('[hub] 未处理异常：', err);
       sendJson(res, status, { error: payload });
     }
-  });
+  }
 
   /**
    * @param {http.IncomingMessage} req
@@ -792,7 +930,7 @@ export function createHub() {
     });
   }
 
-  return { server, eventLog, context, tasks, reviews, comments, files, bus, close, metrics };
+  return { server, eventLog, context, tasks, reviews, comments, files, webhooks, bus, close, metrics };
 }
 
 /**
